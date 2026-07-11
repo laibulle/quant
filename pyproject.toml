@@ -50,7 +50,7 @@ dependencies = [
     "platformdirs==4.5.0",
     "plotly==6.3.1",
     "prompt_toolkit==3.0.52",
-    "protobuf==6.32.1",
+    "protobuf==7.35.1",
     "psutil==7.1.0",
     "ptyprocess==0.7.0",
     "pure_eval==0.2.3",
