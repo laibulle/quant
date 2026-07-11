@@ -295,7 +295,7 @@ defmodule Quant.Math.DEMATest do
 
     # Helper function to check if a float is finite
     defp finite?(val) when is_float(val) do
-      val != :infinity and val != :neg_infinity and not is_nil(val)
+      is_float(val)
     end
 
     defp finite?(_), do: false

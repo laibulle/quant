@@ -26,6 +26,7 @@ defmodule Quant.Strategy.Backtest do
   alias Explorer.DataFrame
   alias Explorer.Series
   alias Quant.Strategy
+  require Explorer.DataFrame
 
   @type backtest_options :: [
           initial_capital: float(),
@@ -34,7 +35,8 @@ defmodule Quant.Strategy.Backtest do
           slippage: float(),
           max_positions: integer(),
           stop_loss: float(),
-          take_profit: float()
+          take_profit: float(),
+          execute_on: :next_open | :close
         ]
 
   @doc """
@@ -89,10 +91,44 @@ defmodule Quant.Strategy.Backtest do
     commission = Keyword.get(opts, :commission, 0.001)
     slippage = Keyword.get(opts, :slippage, 0.0005)
     position_size_method = Keyword.get(opts, :position_size, :percent_capital)
+    execute_on = Keyword.get(opts, :execute_on, :next_open)
+    max_positions = Keyword.get(opts, :max_positions, 1)
+    stop_loss = Keyword.get(opts, :stop_loss)
+    take_profit = Keyword.get(opts, :take_profit)
+
+    with :ok <- validate_execution_options(execute_on, max_positions, stop_loss, take_profit) do
+      execute_backtest_rows(
+        signals_df,
+        initial_capital,
+        commission,
+        slippage,
+        position_size_method,
+        execute_on,
+        stop_loss,
+        take_profit
+      )
+    end
+  rescue
+    e -> {:error, {:backtest_execution_failed, Exception.message(e)}}
+  end
+
+  defp execute_backtest_rows(
+         signals_df,
+         initial_capital,
+         commission,
+         slippage,
+         position_size_method,
+         execute_on,
+         stop_loss,
+         take_profit
+       ) do
+    signals_df = sort_by_timestamp(signals_df)
 
     # Extract required data
     signals = DataFrame.pull(signals_df, "signal") |> Series.to_list()
     prices = DataFrame.pull(signals_df, "close") |> Series.to_list()
+    execution_prices = execution_prices(signals_df, prices, execute_on)
+    execution_signals = execution_signals(signals, execute_on)
 
     # Initialize portfolio state
     initial_state = %{
@@ -106,24 +142,28 @@ defmodule Quant.Strategy.Backtest do
 
     # Process signals sequentially
     {final_state, portfolio_values, positions, trade_returns} =
-      signals
-      |> Enum.zip(prices)
+      execution_signals
+      |> Enum.zip(Enum.zip(execution_prices, prices))
       |> Enum.with_index()
-      |> Enum.reduce({initial_state, [], [], []}, fn {{signal, price}, index},
+      |> Enum.reduce({initial_state, [], [], []}, fn {{signal, {execution_price, close_price}},
+                                                      index},
                                                      {state, portfolio_acc, position_acc,
                                                       returns_acc} ->
+        signal =
+          apply_risk_controls(state, signal, close_price, stop_loss, take_profit, execute_on)
+
         new_state =
           process_signal(
             state,
             signal,
-            price,
+            execution_price,
             index,
             position_size_method,
             commission,
             slippage
           )
 
-        portfolio_value = calculate_portfolio_value(new_state, price)
+        portfolio_value = calculate_portfolio_value(new_state, close_price)
 
         # Calculate trade return if position was closed
         trade_return =
@@ -150,8 +190,6 @@ defmodule Quant.Strategy.Backtest do
       |> add_performance_metrics(final_state, initial_capital)
 
     {:ok, result_df}
-  rescue
-    e -> {:error, {:backtest_execution_failed, Exception.message(e)}}
   end
 
   # Private helper functions
@@ -233,6 +271,76 @@ defmodule Quant.Strategy.Backtest do
       _ -> capital * 0.1
     end
   end
+
+  defp execution_signals(signals, :next_open), do: [0 | Enum.drop(signals, -1)]
+  defp execution_signals(signals, :close), do: signals
+
+  defp execution_prices(dataframe, fallback_prices, :next_open) do
+    if "open" in DataFrame.names(dataframe) do
+      DataFrame.pull(dataframe, "open") |> Series.to_list()
+    else
+      fallback_prices
+    end
+  end
+
+  defp execution_prices(_dataframe, fallback_prices, :close), do: fallback_prices
+
+  defp apply_risk_controls(
+         %{position: position},
+         signal,
+         _price,
+         _stop_loss,
+         _take_profit,
+         _execute_on
+       )
+       when position <= 0,
+       do: signal
+
+  defp apply_risk_controls(_state, signal, _price, _stop_loss, _take_profit, :next_open),
+    do: signal
+
+  defp apply_risk_controls(state, signal, price, stop_loss, take_profit, :close) do
+    entry = state.position_entry_price
+
+    cond do
+      is_number(stop_loss) and price <= entry * (1 - stop_loss) -> -1
+      is_number(take_profit) and price >= entry * (1 + take_profit) -> -1
+      true -> signal
+    end
+  end
+
+  defp sort_by_timestamp(dataframe) do
+    if "timestamp" in DataFrame.names(dataframe),
+      do: DataFrame.sort_by(dataframe, asc: timestamp),
+      else: dataframe
+  end
+
+  defp validate_execution_options(execute_on, max_positions, stop_loss, take_profit) do
+    with :ok <- validate_execution_timing(execute_on, stop_loss, take_profit),
+         :ok <- validate_max_positions(max_positions),
+         :ok <- validate_stop_loss(stop_loss) do
+      validate_take_profit(take_profit)
+    end
+  end
+
+  defp validate_execution_timing(:next_open, stop_loss, take_profit)
+       when not is_nil(stop_loss) or not is_nil(take_profit),
+       do: {:error, :risk_controls_require_close_execution}
+
+  defp validate_execution_timing(execute_on, _stop_loss, _take_profit)
+       when execute_on in [:next_open, :close], do: :ok
+
+  defp validate_execution_timing(execute_on, _stop_loss, _take_profit),
+    do: {:error, {:invalid_execute_on, execute_on}}
+
+  defp validate_max_positions(1), do: :ok
+  defp validate_max_positions(_max_positions), do: {:error, :multi_position_not_supported}
+  defp validate_stop_loss(nil), do: :ok
+  defp validate_stop_loss(value) when is_number(value) and value > 0 and value < 1, do: :ok
+  defp validate_stop_loss(_value), do: {:error, :invalid_stop_loss}
+  defp validate_take_profit(nil), do: :ok
+  defp validate_take_profit(value) when is_number(value) and value > 0, do: :ok
+  defp validate_take_profit(_value), do: {:error, :invalid_take_profit}
 
   defp calculate_portfolio_value(state, current_price) do
     cash_value = state.capital

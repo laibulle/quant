@@ -10,7 +10,7 @@
 
 > **High-performance standardized financial data API for Elixir with Explorer DataFrames**
 
-Fetch financial data from multiple providers with **universal parameters** and **identical output schemas** for seamless analysis and maximum performance.
+Fetch financial data from multiple providers through a common Explorer-first API. Quant standardizes supported historical, quote and search fields while preserving explicit provider limitations.
 
 ## ✨ **Key Features**
 
@@ -131,14 +131,14 @@ results_stream = Quant.Strategy.Optimization.run_combinations_stream(
 - **Explorer/Polars Backend**: Optimized for high-throughput analysis
 - **NX Mathematical Computing**: High-performance numerical operations
 - **Zero External HTTP Deps**: Uses built-in Erlang `:httpc`
-- **Advanced Rate Limiting**: ETS/Redis backends with provider-specific patterns
+- **Rate Limiting**: ETS backend with provider-specific patterns
 - **Streaming Support**: Handle large datasets efficiently
 - **Comprehensive Test Coverage**: Full validation suite with cross-language verification
 
-### 🛡️ **Production Ready**
+### 🛡️ **Research Ready**
 
-- **Type Safety**: Full Dialyzer specifications
-- **Error Handling**: Comprehensive error types and graceful degradation
+- **Type Safety**: Dialyzer-checked public modules
+- **Error Handling**: Explicit provider and parameter errors
 - **Flexible Configuration**: Environment variables, runtime config, inline API keys
 - **Livebook Ready**: Perfect for data science and research workflows
 
@@ -166,9 +166,7 @@ DataFrame.concat_rows(yahoo_df, binance_df)
 |> DataFrame.summarise(avg_price: mean(close), total_volume: sum(volume))
 ```
 
-**✅ ACHIEVED: Complete Schema Standardization Across All Providers**  
-**✅ TESTED: Works with Yahoo Finance, Binance, Alpha Vantage, CoinGecko, Twelve Data**  
-**✅ VALIDATED: Cross-asset analysis (stocks + crypto) in unified DataFrames**
+**Supported fields are standardized at the public API boundary.** Provider-specific capabilities, availability windows and market conventions still differ; inspect a provider's documentation before treating two sources as interchangeable.
 
 **[📖 Complete Standardization Guide →](docs/STANDARDIZATION.md)**
 
@@ -202,7 +200,7 @@ combined_df = DataFrame.concat_rows([binance_btc, yahoo_aapl, alpha_msft])
 **📊 Standardization Stats:**
 
 - ✅ **5 Providers Standardized**: Yahoo Finance, Binance, Alpha Vantage, CoinGecko, Twelve Data  
-- ✅ **100% Schema Consistency**: Every DataFrame has identical structure  
+- ✅ **Stable public schemas** for historical data, quotes and search results
 - ✅ **50+ Parameter Translations**: Universal parameters work with all providers  
 - ✅ **Cross-Asset Ready**: Stocks, crypto, forex all compatible  
 - ✅ **Production Tested**: Real APIs, live data, 1000+ data points validated
@@ -436,7 +434,7 @@ results_stream = Quant.Strategy.Optimization.run_combinations_stream(
 - **📊 Seamless Analysis**: Combine data from multiple providers effortlessly
 - **🔧 Parameter Optimization**: vectorbt-like functionality for systematic strategy tuning
 - **🚀 Parallel Processing**: Multi-core optimization with walk-forward validation
-- **🎯 Advanced Rate Limiting**: Weighted rate limiting per provider with ETS/Redis backends
+- **🎯 Rate Limiting**: Weighted, provider-aware rate limiting with the ETS backend
 - **🛠️ Zero External Dependencies**: Uses built-in Erlang `:httpc` for maximum reliability
 - **🔑 Flexible API Keys**: Pass API keys inline or configure globally
 - **📈 Analysis Ready**: Perfect for Livebook, production systems, and research

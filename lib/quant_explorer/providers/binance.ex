@@ -101,11 +101,11 @@ defmodule Quant.Explorer.Providers.Binance do
   def history(symbol, opts) when is_binary(symbol) do
     interval = Keyword.get(opts, :interval, "1d")
     limit = Keyword.get(opts, :limit, 500)
-    start_time = Keyword.get(opts, :start_time)
-    end_time = Keyword.get(opts, :end_time)
+    start_time = Keyword.get(opts, :start_time) || Keyword.get(opts, :start_date)
+    end_time = Keyword.get(opts, :end_time) || Keyword.get(opts, :end_date)
 
     with :ok <- validate_interval(interval),
-         :ok <- validate_limit(limit),
+         {:ok, limit} <- resolve_limit(interval, limit, start_time, end_time),
          :ok <- RateLimiter.check_and_consume(:binance, :klines, limit: limit),
          data_result <- fetch_klines(symbol, interval, limit, start_time, end_time) do
       parse_klines_data(data_result, symbol)
@@ -441,7 +441,25 @@ defmodule Quant.Explorer.Providers.Binance do
   end
 
   defp datetime_to_ms(%DateTime{} = dt), do: DateTime.to_unix(dt, :millisecond)
+
+  defp datetime_to_ms(%Date{} = date),
+    do: date |> DateTime.new!(~T[00:00:00], "Etc/UTC") |> DateTime.to_unix(:millisecond)
+
   defp datetime_to_ms(timestamp) when is_integer(timestamp), do: timestamp
+
+  defp resolve_limit(_interval, limit, nil, _end_time), do: validate_limit_result(limit)
+  defp resolve_limit(_interval, limit, _start_time, nil), do: validate_limit_result(limit)
+
+  defp resolve_limit(interval, _limit, start_time, end_time) do
+    compute_klines_limit(interval, start_time, end_time)
+  end
+
+  defp validate_limit_result(limit) do
+    case validate_limit(limit) do
+      :ok -> {:ok, limit}
+      {:error, _} = error -> error
+    end
+  end
 
   defp parse_float(value) when is_binary(value) do
     case Float.parse(value) do

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Historical requests now preserve `adjusted: false`, translate Yahoo weekly intervals correctly, and reject inverted date ranges.
+- Binance consumes standardized date ranges; CoinGecko consumes standardized currency options.
+- Historical data is cached locally in ETS and emits a `[:quant, :explorer, :history]` telemetry event.
+- The HTTP client always verifies TLS certificates and hostnames.
+- Backtests execute close-derived signals on the following bar's open by default; same-bar execution is opt-in.
+- Performance analysis now returns return, risk, drawdown and trade metrics.
+
+### Removed
+- Redis is no longer advertised as a supported rate-limiting backend. The checked-in implementation uses ETS only.
+
 ## [0.1.0] - 2025-01-15
 
 ### Added

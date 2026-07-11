@@ -37,7 +37,7 @@ defmodule Quant.Explorer do
   """
 
   alias Explorer.DataFrame
-  alias Quant.Explorer.{Config, RateLimiter, SchemaStandardizer}
+  alias Quant.Explorer.{Cache, Config, SchemaStandardizer}
 
   @type symbol :: String.t()
   @type symbols :: [symbol()]
@@ -67,17 +67,18 @@ defmodule Quant.Explorer do
         {:error, :provider_required}
 
       provider ->
-        with :ok <- RateLimiter.check_and_consume(provider, :default),
-             {:ok, standardized_params} <- SchemaStandardizer.standardize_params(opts, provider),
-             {:ok, provider_module} <- get_provider_module(provider),
-             {:ok, raw_df} <- provider_module.history(symbols, standardized_params),
-             {:ok, standardized_df} <-
-               SchemaStandardizer.standardize_history_schema(raw_df,
-                 provider: provider,
-                 currency: standardized_params[:currency],
-                 timezone: get_provider_timezone(provider)
-               ) do
-          {:ok, standardized_df}
+        with {:ok, standardized_params} <- SchemaStandardizer.standardize_params(opts, provider),
+             {:ok, provider_module} <- get_provider_module(provider) do
+          cache_key = {:history, provider, symbols, Keyword.delete(standardized_params, :api_key)}
+
+          history_request(
+            cache_key,
+            opts,
+            provider_module,
+            symbols,
+            standardized_params,
+            provider
+          )
         else
           {:error, reason} -> {:error, reason}
         end
@@ -98,8 +99,7 @@ defmodule Quant.Explorer do
         {:error, :provider_required}
 
       provider ->
-        with :ok <- RateLimiter.check_and_consume(provider, :default),
-             {:ok, standardized_params} <- SchemaStandardizer.standardize_params(opts, provider),
+        with {:ok, standardized_params} <- SchemaStandardizer.standardize_params(opts, provider),
              {:ok, provider_module} <- get_provider_module(provider),
              {:ok, raw_df} <- provider_module.quote(symbols, standardized_params),
              {:ok, standardized_df} <-
@@ -128,8 +128,7 @@ defmodule Quant.Explorer do
         {:error, :provider_required}
 
       provider ->
-        with :ok <- RateLimiter.check_and_consume(provider, :default),
-             {:ok, standardized_params} <- SchemaStandardizer.standardize_params(opts, provider),
+        with {:ok, standardized_params} <- SchemaStandardizer.standardize_params(opts, provider),
              {:ok, provider_module} <- get_provider_module(provider),
              {:ok, raw_df} <- provider_module.search(query, standardized_params),
              {:ok, standardized_df} <-
@@ -154,8 +153,7 @@ defmodule Quant.Explorer do
         {:error, :provider_required}
 
       provider ->
-        with :ok <- RateLimiter.check_and_consume(provider, :default),
-             {:ok, standardized_params} <- SchemaStandardizer.standardize_params(opts, provider),
+        with {:ok, standardized_params} <- SchemaStandardizer.standardize_params(opts, provider),
              {:ok, provider_module} <- get_provider_module(provider) do
           provider_module.info(symbol, standardized_params)
         else
@@ -292,4 +290,61 @@ defmodule Quant.Explorer do
       _ -> ["usd"]
     end
   end
+
+  defp fetch_standardized_history(provider_module, symbols, standardized_params, provider) do
+    with {:ok, raw_df} <- provider_module.history(symbols, standardized_params) do
+      SchemaStandardizer.standardize_history_schema(raw_df,
+        provider: provider,
+        currency: standardized_params[:currency],
+        timezone: get_provider_timezone(provider)
+      )
+    end
+  end
+
+  defp history_request(cache_key, opts, provider_module, symbols, standardized_params, provider) do
+    fetcher = fn ->
+      fetch_standardized_history(provider_module, symbols, standardized_params, provider)
+    end
+
+    cached_or_fetch(cache_key, Keyword.get(opts, :cache, true), fetcher)
+  end
+
+  defp cached_or_fetch(_cache_key, false, fetcher) do
+    started_at = System.monotonic_time(:microsecond)
+    observe_history(fetcher.(), false, started_at)
+  end
+
+  defp cached_or_fetch(cache_key, true, fetcher) do
+    started_at = System.monotonic_time(:microsecond)
+
+    result_and_cache_status =
+      case Cache.get(cache_key) do
+        {:ok, value} -> {value, true}
+        :miss -> cache_fetched_history(cache_key, fetcher)
+      end
+
+    {result, cached} = result_and_cache_status
+    observe_history(result, cached, started_at)
+  end
+
+  defp cache_fetched_history(cache_key, fetcher) do
+    result = fetcher.()
+    if match?({:ok, _}, result), do: Cache.put(cache_key, result)
+    {result, false}
+  end
+
+  defp observe_history(result, cached, started_at) do
+    if Config.telemetry_enabled?() do
+      :telemetry.execute(
+        [:quant, :explorer, :history],
+        %{duration: System.monotonic_time(:microsecond) - started_at},
+        %{cached: cached, result: result_status(result)}
+      )
+    end
+
+    result
+  end
+
+  defp result_status({:ok, _}), do: :ok
+  defp result_status({:error, reason}), do: {:error, reason}
 end

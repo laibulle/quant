@@ -1,5 +1,14 @@
 import Config
 
+config :pythonx, :uv_init,
+  pyproject_toml: """
+  [project]
+  name = "quant-test"
+  version = "0.0.0"
+  requires-python = "==3.13.*"
+  dependencies = ["numpy==2.2.2", "pandas==2.3.3"]
+  """
+
 # Test environment configuration
 config :quant,
   # Higher rate limits for tests (using mocked responses mostly)

@@ -47,7 +47,7 @@ defmodule Quant.Explorer.Providers.TwelveData do
 
   require Logger
   alias Explorer.DataFrame
-  alias Quant.Explorer.{HttpClientConfig, RateLimiter}
+  alias Quant.Explorer.{Config, HttpClientConfig, RateLimiter}
 
   @base_url "https://api.twelvedata.com"
   @user_agent "Quant.Explorer/1.0"
@@ -98,12 +98,11 @@ defmodule Quant.Explorer.Providers.TwelveData do
   @impl true
   @spec history(String.t() | [String.t()], keyword()) :: {:ok, DataFrame.t()} | {:error, term()}
   def history(symbols, opts \\ []) when is_binary(symbols) or is_list(symbols) do
-    case RateLimiter.check_and_consume(:twelve_data, :time_series) do
-      :ok ->
-        fetch_time_series_data(symbols, opts)
-
-      {:error, :rate_limited} ->
-        {:error, :rate_limited}
+    with :ok <- ensure_api_key(Keyword.get(opts, :api_key)) do
+      case RateLimiter.check_and_consume(:twelve_data, :time_series) do
+        :ok -> fetch_time_series_data(symbols, opts)
+        {:error, :rate_limited} -> {:error, :rate_limited}
+      end
     end
   end
 
@@ -130,12 +129,11 @@ defmodule Quant.Explorer.Providers.TwelveData do
   def quote(symbols, opts \\ []) when is_binary(symbols) or is_list(symbols) do
     api_key = Keyword.get(opts, :api_key)
 
-    case RateLimiter.check_and_consume(:twelve_data, :quote) do
-      :ok ->
-        fetch_real_time_quotes(symbols, api_key)
-
-      {:error, :rate_limited} ->
-        {:error, :rate_limited}
+    with :ok <- ensure_api_key(api_key) do
+      case RateLimiter.check_and_consume(:twelve_data, :quote) do
+        :ok -> fetch_real_time_quotes(symbols, api_key)
+        {:error, :rate_limited} -> {:error, :rate_limited}
+      end
     end
   end
 
@@ -156,12 +154,11 @@ defmodule Quant.Explorer.Providers.TwelveData do
   def info(symbol, opts \\ []) when is_binary(symbol) do
     api_key = Keyword.get(opts, :api_key)
 
-    case RateLimiter.check_and_consume(:twelve_data, :profile) do
-      :ok ->
-        fetch_company_profile(symbol, api_key)
-
-      {:error, :rate_limited} ->
-        {:error, :rate_limited}
+    with :ok <- ensure_api_key(api_key) do
+      case RateLimiter.check_and_consume(:twelve_data, :profile) do
+        :ok -> fetch_company_profile(symbol, api_key)
+        {:error, :rate_limited} -> {:error, :rate_limited}
+      end
     end
   end
 
@@ -182,12 +179,11 @@ defmodule Quant.Explorer.Providers.TwelveData do
   def search(query, opts \\ []) when is_binary(query) do
     api_key = Keyword.get(opts, :api_key)
 
-    case RateLimiter.check_and_consume(:twelve_data, :symbol_search) do
-      :ok ->
-        fetch_search_results(query, api_key)
-
-      {:error, :rate_limited} ->
-        {:error, :rate_limited}
+    with :ok <- ensure_api_key(api_key) do
+      case RateLimiter.check_and_consume(:twelve_data, :symbol_search) do
+        :ok -> fetch_search_results(query, api_key)
+        {:error, :rate_limited} -> {:error, :rate_limited}
+      end
     end
   end
 
@@ -577,7 +573,7 @@ defmodule Quant.Explorer.Providers.TwelveData do
   end
 
   defp build_time_series_params(symbol, interval, outputsize, opts) do
-    api_key = Keyword.get(opts, :api_key, get_api_key())
+    api_key = Keyword.get(opts, :api_key) || get_api_key()
 
     base_params = %{
       "symbol" => symbol,
@@ -601,15 +597,10 @@ defmodule Quant.Explorer.Providers.TwelveData do
     HttpClientConfig.get(url, params, headers: headers, timeout: @default_timeout)
   end
 
-  defp get_api_key do
-    case Application.get_env(:quant, :api_keys, %{}) do
-      %{twelve_data: api_key} when is_binary(api_key) ->
-        api_key
+  defp get_api_key, do: Config.api_key(:twelve_data)
 
-      _ ->
-        Logger.error("Twelve Data API key not configured")
-        raise "Twelve Data API key is required. Set TWELVE_DATA_API_KEY environment variable."
-    end
+  defp ensure_api_key(api_key) do
+    if is_binary(api_key || get_api_key()), do: :ok, else: {:error, :api_key_missing}
   end
 
   defp validate_interval(interval) do

@@ -217,42 +217,8 @@ defmodule Quant.Explorer.HttpClient do
     [
       verify: :verify_peer,
       cacertfile: :certifi.cacertfile(),
-      depth: 3,
-      verify_fun: {&ssl_verify_fun/3, []},
-      # Disable SNI to help with wildcard certificates
-      server_name_indication: :disable
+      depth: 3
     ]
-  rescue
-    _error ->
-      # Fallback to no SSL verification if certifi is not available
-      [verify: :verify_none]
-  end
-
-  # Custom SSL verification function to handle Yahoo Finance certificate issues
-  defp ssl_verify_fun(_cert, :valid, _user_state), do: {:valid, []}
-  defp ssl_verify_fun(_cert, :valid_peer, _user_state), do: {:valid, []}
-
-  # Accept hostname check failures - this handles the query1.finance.yahoo.com case
-  defp ssl_verify_fun(_cert, {:bad_cert, :hostname_check_failed}, _user_state) do
-    # Accept anyway for finance APIs
-    {:valid, []}
-  end
-
-  # Handle certificate extensions - these are usually informational
-  defp ssl_verify_fun(_cert, {:extension, _extension}, _user_state) do
-    # Let other verifiers handle extensions
-    {:unknown, []}
-  end
-
-  # Handle other certificate issues
-  defp ssl_verify_fun(_cert, {:bad_cert, reason}, _user_state) do
-    Logger.debug("SSL certificate issue: #{inspect(reason)}")
-    {:fail, reason}
-  end
-
-  defp ssl_verify_fun(_cert, reason, _user_state) do
-    Logger.debug("SSL verification issue: #{inspect(reason)}")
-    {:fail, reason}
   end
 
   defp headers_from_opts(opts) do
@@ -264,6 +230,7 @@ defmodule Quant.Explorer.HttpClient do
   defp build_url_with_params(url, params) do
     query_string =
       params
+      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
       |> Enum.map_join("&", fn {k, v} ->
         "#{URI.encode_www_form(to_string(k))}=#{URI.encode_www_form(to_string(v))}"
       end)

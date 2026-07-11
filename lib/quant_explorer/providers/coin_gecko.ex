@@ -43,7 +43,7 @@ defmodule Quant.Explorer.Providers.CoinGecko do
   require Logger
 
   alias Explorer.DataFrame
-  alias Quant.Explorer.{HttpClientConfig, RateLimiter}
+  alias Quant.Explorer.{Config, HttpClientConfig, RateLimiter}
 
   @base_url "https://api.coingecko.com/api/v3"
   @pro_base_url "https://pro-api.coingecko.com/api/v3"
@@ -111,10 +111,10 @@ defmodule Quant.Explorer.Providers.CoinGecko do
   """
   @impl true
   @spec quote(String.t() | [String.t()]) :: {:ok, DataFrame.t()} | {:error, term()}
-  def quote(coin_ids, _opts \\ []) when is_binary(coin_ids) or is_list(coin_ids) do
+  def quote(coin_ids, opts \\ []) when is_binary(coin_ids) or is_list(coin_ids) do
     case RateLimiter.check_and_consume(:coin_gecko, :simple_price) do
       :ok ->
-        fetch_current_prices(coin_ids)
+        fetch_current_prices(coin_ids, opts)
 
       {:error, :rate_limited} ->
         {:error, :rate_limited}
@@ -190,7 +190,7 @@ defmodule Quant.Explorer.Providers.CoinGecko do
 
   defp fetch_historical_data(coin_id, opts) when is_binary(coin_id) do
     days = Keyword.get(opts, :days, 30)
-    vs_currency = Keyword.get(opts, :vs_currency, "usd")
+    vs_currency = Keyword.get(opts, :vs_currency, Keyword.get(opts, :currency, "usd"))
 
     with :ok <- validate_vs_currency(vs_currency),
          :ok <- validate_days(days) do
@@ -242,15 +242,16 @@ defmodule Quant.Explorer.Providers.CoinGecko do
     end
   end
 
-  defp fetch_current_prices(coin_ids) do
+  defp fetch_current_prices(coin_ids, opts) do
     coin_list = if is_binary(coin_ids), do: [coin_ids], else: coin_ids
     ids = Enum.join(coin_list, ",")
+    vs_currency = Keyword.get(opts, :vs_currency, Keyword.get(opts, :currency, "usd"))
 
     url = "#{get_base_url()}/simple/price"
 
     params = %{
       "ids" => ids,
-      "vs_currencies" => "usd",
+      "vs_currencies" => vs_currency,
       "include_24hr_change" => "true",
       "include_24hr_vol" => "true",
       "include_market_cap" => "true"
@@ -260,7 +261,7 @@ defmodule Quant.Explorer.Providers.CoinGecko do
 
     case HttpClientConfig.get(url, params, headers: headers, timeout: @default_timeout) do
       {:ok, %{status: 200, body: body}} ->
-        parse_simple_price_response(body, coin_list)
+        parse_simple_price_response(body, coin_list, vs_currency)
 
       {:ok, %{status: 404}} ->
         {:error, :symbol_not_found}
@@ -399,7 +400,7 @@ defmodule Quant.Explorer.Providers.CoinGecko do
     end
   end
 
-  defp parse_simple_price_response(body, coin_ids) do
+  defp parse_simple_price_response(body, coin_ids, vs_currency) do
     case HttpClientConfig.decode_json(body) do
       {:ok, price_data} when is_map(price_data) ->
         data =
@@ -408,11 +409,11 @@ defmodule Quant.Explorer.Providers.CoinGecko do
 
             %{
               "symbol" => coin_id,
-              "price" => Map.get(coin_data, "usd", 0.0),
-              "change" => Map.get(coin_data, "usd_24h_change", 0.0),
-              "change_percent" => Map.get(coin_data, "usd_24h_change", 0.0),
-              "volume" => trunc(Map.get(coin_data, "usd_24h_vol", 0.0)),
-              "market_cap" => trunc(Map.get(coin_data, "usd_market_cap", 0.0)),
+              "price" => Map.get(coin_data, vs_currency),
+              "change" => Map.get(coin_data, "#{vs_currency}_24h_change"),
+              "change_percent" => Map.get(coin_data, "#{vs_currency}_24h_change"),
+              "volume" => Map.get(coin_data, "#{vs_currency}_24h_vol"),
+              "market_cap" => Map.get(coin_data, "#{vs_currency}_market_cap"),
               "timestamp" => DateTime.utc_now()
             }
           end)
@@ -524,12 +525,7 @@ defmodule Quant.Explorer.Providers.CoinGecko do
     end
   end
 
-  defp get_api_key do
-    case Application.get_env(:quant, :api_keys, %{}) do
-      %{coin_gecko: api_key} when is_binary(api_key) -> api_key
-      _ -> nil
-    end
-  end
+  defp get_api_key, do: Config.api_key(:coin_gecko)
 
   defp validate_vs_currency(currency) do
     if currency in @supported_currencies do

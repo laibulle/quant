@@ -25,51 +25,51 @@ defmodule Quant.Explorer.SchemaStandardizer do
   @standard_intervals %{
     # Intraday intervals
     "1m" => %{
-      yahoo: "1m",
+      yahoo_finance: "1m",
       alpha_vantage: "1min",
       binance: "1m",
       twelve_data: "1min"
     },
     "5m" => %{
-      yahoo: "5m",
+      yahoo_finance: "5m",
       alpha_vantage: "5min",
       binance: "5m",
       twelve_data: "5min"
     },
     "15m" => %{
-      yahoo: "15m",
+      yahoo_finance: "15m",
       alpha_vantage: "15min",
       binance: "15m",
       twelve_data: "15min"
     },
     "30m" => %{
-      yahoo: "30m",
+      yahoo_finance: "30m",
       alpha_vantage: "30min",
       binance: "30m",
       twelve_data: "30min"
     },
     "1h" => %{
-      yahoo: "1h",
+      yahoo_finance: "1h",
       alpha_vantage: "60min",
       binance: "1h",
       twelve_data: "1h"
     },
     # Daily and longer intervals
     "1d" => %{
-      yahoo: "1d",
+      yahoo_finance: "1d",
       alpha_vantage: "daily",
       binance: "1d",
       twelve_data: "1day",
       coin_gecko: "daily"
     },
     "1w" => %{
-      yahoo: "1wk",
+      yahoo_finance: "1wk",
       alpha_vantage: "weekly",
       binance: "1w",
       twelve_data: "1week"
     },
     "1mo" => %{
-      yahoo: "1mo",
+      yahoo_finance: "1mo",
       alpha_vantage: "monthly",
       binance: "1M",
       twelve_data: "1month"
@@ -113,7 +113,8 @@ defmodule Quant.Explorer.SchemaStandardizer do
   """
   @spec standardize_params(keyword(), atom()) :: {:ok, keyword()} | {:error, term()}
   def standardize_params(params, provider) do
-    with {:ok, interval} <- normalize_interval(params[:interval], provider),
+    with :ok <- validate_provider_support(params, provider),
+         {:ok, interval} <- normalize_interval(params[:interval], provider),
          {:ok, period_params} <- normalize_period(params[:period], provider),
          {:ok, date_params} <- normalize_dates(params[:start_date], params[:end_date]),
          {:ok, currency} <- normalize_currency(params[:currency], provider),
@@ -123,7 +124,7 @@ defmodule Quant.Explorer.SchemaStandardizer do
           interval: interval,
           currency: currency,
           limit: limit,
-          adjusted: params[:adjusted] || true,
+          adjusted: Keyword.get(params, :adjusted, true),
           api_key: params[:api_key]
         ]
         |> Keyword.merge(period_params)
@@ -347,7 +348,8 @@ defmodule Quant.Explorer.SchemaStandardizer do
 
   defp normalize_dates(start_date, end_date) do
     with {:ok, start_dt} <- parse_date(start_date),
-         {:ok, end_dt} <- parse_date(end_date) do
+         {:ok, end_dt} <- parse_date(end_date),
+         :ok <- validate_date_range(start_dt, end_dt) do
       {:ok, [start_date: start_dt, end_date: end_dt]}
     else
       error -> error
@@ -380,6 +382,11 @@ defmodule Quant.Explorer.SchemaStandardizer do
   end
 
   defp parse_date(date), do: {:error, {:invalid_date, date}}
+
+  defp validate_date_range(%Date{} = start_date, %Date{} = end_date) when start_date > end_date,
+    do: {:error, :invalid_date_range}
+
+  defp validate_date_range(_start_date, _end_date), do: :ok
 
   defp period_to_date_range(:max) do
     end_date = Date.utc_today()
@@ -423,7 +430,7 @@ defmodule Quant.Explorer.SchemaStandardizer do
           %NaiveDateTime{} = ndt -> DateTime.from_naive!(ndt, "UTC")
           unix_timestamp when is_integer(unix_timestamp) -> DateTime.from_unix!(unix_timestamp)
           # Fallback
-          _ -> DateTime.utc_now()
+          _ -> nil
         end)
 
       DataFrame.put(df, "timestamp", timestamp_series)
@@ -446,11 +453,11 @@ defmodule Quant.Explorer.SchemaStandardizer do
   end
 
   defp normalize_price_value(nil), do: nil
-  defp normalize_price_value(price) when is_number(price), do: Float.round(price / 1.0, 4)
+  defp normalize_price_value(price) when is_number(price), do: price / 1.0
 
   defp normalize_price_value(price) when is_binary(price) do
     case Float.parse(price) do
-      {float_val, _} -> Float.round(float_val, 4)
+      {float_val, _} -> float_val
       :error -> nil
     end
   end
@@ -466,18 +473,18 @@ defmodule Quant.Explorer.SchemaStandardizer do
     end
   end
 
-  defp normalize_volume_value(nil), do: 0
+  defp normalize_volume_value(nil), do: nil
   defp normalize_volume_value(vol) when is_integer(vol), do: vol
   defp normalize_volume_value(vol) when is_float(vol), do: trunc(vol)
 
   defp normalize_volume_value(vol) when is_binary(vol) do
     case Integer.parse(vol) do
       {int_val, _} -> int_val
-      :error -> 0
+      :error -> nil
     end
   end
 
-  defp normalize_volume_value(_), do: 0
+  defp normalize_volume_value(_), do: nil
 
   defp normalize_change_percent(df) do
     if "change_percent" in DataFrame.names(df) do
@@ -535,7 +542,9 @@ defmodule Quant.Explorer.SchemaStandardizer do
     else
       # Add default match score based on position (first result = highest score)
       rows = DataFrame.n_rows(df)
-      scores = Enum.map(1..rows, fn i -> Float.round(1.0 - (i - 1) * 0.1, 2) end)
+
+      scores = generated_match_scores(rows)
+
       score_series = Series.from_list(scores)
       DataFrame.put(df, "match_score", score_series)
     end
@@ -550,6 +559,12 @@ defmodule Quant.Explorer.SchemaStandardizer do
       value_series = Series.from_list(List.duplicate(string_value, rows))
       DataFrame.put(acc_df, col_name, value_series)
     end)
+  end
+
+  defp generated_match_scores(0), do: []
+
+  defp generated_match_scores(rows) do
+    Enum.map(1..rows, fn i -> max(0.0, Float.round(1.0 - (i - 1) * 0.1, 2)) end)
   end
 
   defp reorder_columns(df, standard_order) do
@@ -570,11 +585,11 @@ defmodule Quant.Explorer.SchemaStandardizer do
       String.contains?(ts_string, "T") ->
         case DateTime.from_iso8601(ts_string) do
           {:ok, dt, _} -> dt
-          {:error, _} -> DateTime.utc_now()
+          {:error, _} -> nil
         end
 
       true ->
-        DateTime.utc_now()
+        nil
     end
   end
 

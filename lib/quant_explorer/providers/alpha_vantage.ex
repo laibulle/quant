@@ -110,15 +110,25 @@ defmodule Quant.Explorer.Providers.AlphaVantage do
 
   def history(symbol, opts) when is_binary(symbol) do
     interval = Keyword.get(opts, :interval, "daily")
-    outputsize = Keyword.get(opts, :outputsize, "compact")
+
+    outputsize =
+      Keyword.get(
+        opts,
+        :outputsize,
+        if(Keyword.has_key?(opts, :start_date), do: "full", else: "compact")
+      )
+
     adjusted = Keyword.get(opts, :adjusted, true)
     api_key = Keyword.get(opts, :api_key)
 
     with :ok <- validate_interval(interval),
          :ok <- validate_outputsize(outputsize),
+         :ok <- ensure_api_key(api_key),
          :ok <- RateLimiter.check_and_consume(:alpha_vantage, :time_series),
          data_result <- fetch_time_series(symbol, interval, outputsize, adjusted, api_key) do
-      parse_time_series_data(data_result, symbol)
+      data_result
+      |> parse_time_series_data(symbol)
+      |> filter_history_range(opts)
     else
       {:error, reason} -> {:error, reason}
     end
@@ -176,7 +186,8 @@ defmodule Quant.Explorer.Providers.AlphaVantage do
   def quote(symbol, opts) when is_binary(symbol) do
     api_key = Keyword.get(opts, :api_key)
 
-    with :ok <- RateLimiter.check_and_consume(:alpha_vantage, :quote),
+    with :ok <- ensure_api_key(api_key),
+         :ok <- RateLimiter.check_and_consume(:alpha_vantage, :quote),
          data_result <- fetch_global_quote(symbol, api_key) do
       parse_quote_data(data_result, symbol)
     else
@@ -202,7 +213,8 @@ defmodule Quant.Explorer.Providers.AlphaVantage do
   def search(query, opts \\ []) when is_binary(query) do
     api_key = Keyword.get(opts, :api_key)
 
-    with :ok <- RateLimiter.check_and_consume(:alpha_vantage, :search),
+    with :ok <- ensure_api_key(api_key),
+         :ok <- RateLimiter.check_and_consume(:alpha_vantage, :search),
          data_result <- fetch_symbol_search(query, api_key) do
       parse_search_data(data_result)
     else
@@ -224,6 +236,12 @@ defmodule Quant.Explorer.Providers.AlphaVantage do
   def info(_symbol, _opts \\ []), do: {:error, :not_supported}
 
   # Private functions
+
+  defp ensure_api_key(api_key) do
+    if is_binary(api_key || Config.api_key(:alpha_vantage)),
+      do: :ok,
+      else: {:error, :api_key_missing}
+  end
 
   defp validate_interval(interval) do
     if interval in @intervals do
@@ -337,13 +355,35 @@ defmodule Quant.Explorer.Providers.AlphaVantage do
 
     case final_api_key do
       nil ->
-        Logger.error("Alpha Vantage API key not configured")
-
-        raise "Alpha Vantage API key is required. Set ALPHA_VANTAGE_API_KEY environment variable or pass it as an option."
+        params
 
       key ->
         [{"apikey", key} | params]
     end
+  end
+
+  defp filter_history_range({:ok, df}, opts) do
+    start_date = Keyword.get(opts, :start_date)
+    end_date = Keyword.get(opts, :end_date)
+
+    if is_nil(start_date) and is_nil(end_date) do
+      {:ok, df}
+    else
+      rows =
+        df
+        |> DataFrame.to_rows()
+        |> Enum.filter(&timestamp_in_range?(&1, start_date, end_date))
+
+      {:ok, DataFrame.new(rows)}
+    end
+  end
+
+  defp filter_history_range({:error, _} = error, _opts), do: error
+
+  defp timestamp_in_range?(row, start_date, end_date) do
+    timestamp = Map.get(row, "timestamp") || Map.get(row, :timestamp)
+    date = DateTime.to_date(timestamp)
+    (is_nil(start_date) or date >= start_date) and (is_nil(end_date) or date <= end_date)
   end
 
   defp parse_time_series_data({:ok, data}, symbol) do

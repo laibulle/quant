@@ -166,7 +166,8 @@ defmodule Quant.Math.Oscillators.RSITest do
 
       # Test invalid dataframe
       assert_raise ArgumentError, ~r/Expected Explorer DataFrame/, fn ->
-        Oscillators.add_rsi!(%{not: "dataframe"}, :close)
+        invalid_input = Map.new(not: "dataframe")
+        Oscillators.add_rsi!(invalid_input, :close)
       end
     end
 

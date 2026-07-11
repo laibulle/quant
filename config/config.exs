@@ -7,18 +7,6 @@
 # General application configuration
 import Config
 
-config :pythonx, :uv_init,
-  pyproject_toml: """
-  [project]
-  name = "project"
-  version = "0.0.0"
-  requires-python = "==3.13.*"
-  dependencies = [
-    "numpy==2.2.2",
-    "pandas==2.3.3"
-  ]
-  """
-
 config :quant,
   # Rate limiting (legacy - for backwards compatibility)
   rate_limits: %{
@@ -29,25 +17,14 @@ config :quant,
     twelve_data: 8
   },
 
-  # Advanced rate limiting configuration
-  # Options: :ets, :redis
+  # Advanced rate limiting configuration (ETS is the built-in backend)
   rate_limiting_backend: :ets,
   rate_limiting_backend_opts: [
     # ETS options
     table_opts: [:set, :public, :named_table]
-
-    # Redis options (used when backend is :redis)
-    # redis_opts: [host: "localhost", port: 6379, database: 0]
   ],
   rate_limiting_cleanup_interval: :timer.minutes(5),
   rate_limiting_enable_stats: true,
-
-  # Redis configuration (for Redis backend)
-  redis_opts: [
-    host: {:system, "REDIS_HOST", "localhost"},
-    port: {:system, "REDIS_PORT", 6379},
-    database: {:system, "REDIS_DATABASE", 0}
-  ],
 
   # Caching settings
   cache_ttl: :timer.minutes(5),
