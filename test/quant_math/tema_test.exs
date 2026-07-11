@@ -52,7 +52,7 @@ defmodule Quant.Math.TemaTest do
 
       # Later values should be finite numbers
       valid_values = Enum.drop(tema_values, 12)
-      assert length(valid_values) > 0
+      assert valid_values != []
       assert Enum.all?(valid_values, &finite?/1)
     end
 
@@ -265,7 +265,7 @@ defmodule Quant.Math.TemaTest do
 
       # Verify TEMA has some valid values and they're reasonable
       valid_tema = Enum.filter(tema, &finite?/1)
-      assert length(valid_tema) > 0
+      assert valid_tema != []
 
       # TEMA should be close to price values (basic sanity check)
       assert Enum.all?(valid_tema, fn v -> v > 0 and v < 100 end)

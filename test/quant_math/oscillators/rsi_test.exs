@@ -352,7 +352,7 @@ defmodule Quant.Math.Oscillators.RSITest do
 
       # After initial nils, should have valid RSI values
       valid_rsi = rsi_values |> Enum.filter(&is_number/1)
-      assert length(valid_rsi) > 0
+      assert valid_rsi != []
 
       # All RSI values should be reasonable (upward trend = high RSI)
       # Note: first value might be 50.0 when there's no initial change

@@ -286,7 +286,7 @@ defmodule Quant.Strategy.Composite do
       |> Enum.with_index()
       |> Enum.reject(fn {signal, _} -> signal == 0 end)
 
-    if length(non_zero_signals) > 0 do
+    if non_zero_signals != [] do
       # Take the strongest signal
       {signal, index} =
         non_zero_signals

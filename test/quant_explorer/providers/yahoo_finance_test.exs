@@ -91,9 +91,9 @@ defmodule Quant.Explorer.Providers.YahooFinanceTest do
 
   describe "history/2" do
     test "fetches historical data for a single symbol" do
-      with_bypass path: "/v8/finance/chart/AAPL",
-                  method: "GET",
-                  response: @mock_chart_response do
+      with_http_mock_paths path: "/v8/finance/chart/AAPL",
+                           method: "GET",
+                           response: @mock_chart_response do
         assert {:ok, df} = YahooFinance.history("AAPL", period: "1y")
         assert DataFrame.n_rows(df) == 3
 
@@ -118,7 +118,7 @@ defmodule Quant.Explorer.Providers.YahooFinanceTest do
     end
 
     test "handles multiple symbols concurrently" do
-      with_bypass [
+      with_http_mock_paths [
         # Mock both AAPL and MSFT responses
         %{path: "/v8/finance/chart/AAPL", method: "GET", response: @mock_chart_response},
         %{path: "/v8/finance/chart/MSFT", method: "GET", response: @mock_chart_response}
@@ -141,17 +141,17 @@ defmodule Quant.Explorer.Providers.YahooFinanceTest do
     end
 
     test "handles 404 symbol not found" do
-      with_bypass path: "/v8/finance/chart/INVALID",
-                  method: "GET",
-                  response: %{status: 404} do
+      with_http_mock_paths path: "/v8/finance/chart/INVALID",
+                           method: "GET",
+                           response: %{status: 404} do
         assert {:error, :symbol_not_found} = YahooFinance.history("INVALID")
       end
     end
 
     test "handles custom date ranges" do
-      with_bypass path: "/v8/finance/chart/AAPL",
-                  method: "GET",
-                  response: @mock_chart_response do
+      with_http_mock_paths path: "/v8/finance/chart/AAPL",
+                           method: "GET",
+                           response: @mock_chart_response do
         start_date = ~D[2024-01-01]
         end_date = ~D[2024-12-31]
 
@@ -169,9 +169,9 @@ defmodule Quant.Explorer.Providers.YahooFinanceTest do
 
   describe "quote/1" do
     test "fetches real-time quotes for symbols" do
-      with_bypass path: "/v7/finance/quote",
-                  method: "GET",
-                  response: @mock_quote_response do
+      with_http_mock_paths path: "/v7/finance/quote",
+                           method: "GET",
+                           response: @mock_quote_response do
         assert {:ok, df} = YahooFinance.quote(["AAPL"])
         assert DataFrame.n_rows(df) == 1
 
@@ -194,9 +194,9 @@ defmodule Quant.Explorer.Providers.YahooFinanceTest do
     end
 
     test "handles single symbol as string" do
-      with_bypass path: "/v7/finance/quote",
-                  method: "GET",
-                  response: @mock_quote_response do
+      with_http_mock_paths path: "/v7/finance/quote",
+                           method: "GET",
+                           response: @mock_quote_response do
         assert {:ok, df} = YahooFinance.quote("AAPL")
         assert DataFrame.n_rows(df) == 1
       end
@@ -205,9 +205,9 @@ defmodule Quant.Explorer.Providers.YahooFinanceTest do
 
   describe "search/1" do
     test "searches for symbols by query" do
-      with_bypass path: "/v1/finance/search",
-                  method: "GET",
-                  response: @mock_search_response do
+      with_http_mock_paths path: "/v1/finance/search",
+                           method: "GET",
+                           response: @mock_search_response do
         assert {:ok, df} = YahooFinance.search("Apple")
         assert DataFrame.n_rows(df) == 1
 
@@ -254,9 +254,9 @@ defmodule Quant.Explorer.Providers.YahooFinanceTest do
       }
       """
 
-      with_bypass path: "/v10/finance/quoteSummary/AAPL",
-                  method: "GET",
-                  response: mock_info_response do
+      with_http_mock_paths path: "/v10/finance/quoteSummary/AAPL",
+                           method: "GET",
+                           response: mock_info_response do
         assert {:ok, info} = YahooFinance.info("AAPL")
         assert info.symbol == "AAPL"
         assert info.name == "Apple Inc."
@@ -268,9 +268,9 @@ defmodule Quant.Explorer.Providers.YahooFinanceTest do
 
   describe "history_stream/2" do
     test "creates stream for historical data" do
-      with_bypass path: "/v8/finance/chart/AAPL",
-                  method: "GET",
-                  response: @mock_chart_response do
+      with_http_mock_paths path: "/v8/finance/chart/AAPL",
+                           method: "GET",
+                           response: @mock_chart_response do
         stream = YahooFinance.history_stream("AAPL", period: "1y")
         dfs = Enum.to_list(stream)
 
@@ -280,13 +280,13 @@ defmodule Quant.Explorer.Providers.YahooFinanceTest do
     end
 
     test "streams max period data" do
-      with_bypass path: "/v8/finance/chart/AAPL",
-                  method: "GET",
-                  response: @mock_chart_response do
+      with_http_mock_paths path: "/v8/finance/chart/AAPL",
+                           method: "GET",
+                           response: @mock_chart_response do
         stream = YahooFinance.history_stream("AAPL", period: "max", interval: "1d")
         dfs = Enum.to_list(stream)
 
-        assert length(dfs) > 0
+        assert dfs != []
       end
     end
   end
@@ -333,9 +333,9 @@ defmodule Quant.Explorer.Providers.YahooFinanceTest do
       }
       """
 
-      with_bypass path: "/v7/finance/options/AAPL",
-                  method: "GET",
-                  response: mock_options_response do
+      with_http_mock_paths path: "/v7/finance/options/AAPL",
+                           method: "GET",
+                           response: mock_options_response do
         assert {:ok, options} = YahooFinance.options("AAPL")
         assert options.symbol == "AAPL"
         assert length(options.calls) == 1
@@ -358,9 +358,9 @@ defmodule Quant.Explorer.Providers.YahooFinanceTest do
 
   describe "error handling" do
     test "handles JSON parse errors" do
-      with_bypass path: "/v8/finance/chart/AAPL",
-                  method: "GET",
-                  response: "invalid json" do
+      with_http_mock_paths path: "/v8/finance/chart/AAPL",
+                           method: "GET",
+                           response: "invalid json" do
         assert {:error, {:parse_error, _}} = YahooFinance.history("AAPL")
       end
     end
@@ -377,9 +377,9 @@ defmodule Quant.Explorer.Providers.YahooFinanceTest do
       }
       """
 
-      with_bypass path: "/v8/finance/chart/INVALID",
-                  method: "GET",
-                  response: error_response do
+      with_http_mock_paths path: "/v8/finance/chart/INVALID",
+                           method: "GET",
+                           response: error_response do
         assert {:error, {:provider_error, "No data found, symbol may be delisted"}} =
                  YahooFinance.history("INVALID")
       end

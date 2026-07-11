@@ -53,7 +53,7 @@ defmodule Quant.Math.KamaTest do
 
       # Later values should be finite numbers
       valid_values = Enum.drop(kama_values, 10)
-      assert length(valid_values) > 0
+      assert valid_values != []
       assert Enum.all?(valid_values, &finite?/1)
     end
 
@@ -70,7 +70,7 @@ defmodule Quant.Math.KamaTest do
       valid_kama = kama_values |> Enum.filter(&finite?/1)
 
       # Should have some valid values
-      assert length(valid_kama) > 0
+      assert valid_kama != []
 
       # All valid values should be reasonable (between min and max of input data)
       min_price = Enum.min(combined_data)
@@ -94,7 +94,7 @@ defmodule Quant.Math.KamaTest do
       custom_valid = Enum.filter(kama_custom, &finite?/1)
       default_valid = Enum.filter(kama_default, &finite?/1)
 
-      if length(custom_valid) > 0 and length(default_valid) > 0 do
+      if custom_valid != [] and default_valid != [] do
         assert custom_valid != default_valid
       end
     end
@@ -130,7 +130,7 @@ defmodule Quant.Math.KamaTest do
       high_valid = Enum.filter(kama_high, &finite?/1)
       close_valid = Enum.filter(kama_close, &finite?/1)
 
-      if length(high_valid) > 0 and length(close_valid) > 0 do
+      if high_valid != [] and close_valid != [] do
         assert high_valid != close_valid
       end
     end
@@ -281,8 +281,8 @@ defmodule Quant.Math.KamaTest do
       choppy_valid = Enum.filter(choppy_values, &finite?/1)
 
       # Both should have some valid values
-      assert length(trend_valid) > 0
-      assert length(choppy_valid) > 0
+      assert trend_valid != []
+      assert choppy_valid != []
     end
   end
 

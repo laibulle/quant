@@ -98,7 +98,7 @@ defmodule Quant.Explorer.IntegrationTest do
     test "Application supervision tree is working" do
       # Test that the main application components are running
       children = Supervisor.which_children(Quant.Explorer.Supervisor)
-      assert length(children) > 0
+      assert children != []
 
       # Rate limiter should be running
       rate_limiter_running =

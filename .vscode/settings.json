@@ -1,5 +1,5 @@
 {
-    "code-livebook.livebookExecutablePath": "/Users/guillaume/.asdf/installs/elixir/1.18.4-otp-28/.mix/escripts/livebook",
+    "code-livebook.livebookExecutablePath": "/Users/guillaume/.asdf/installs/elixir/1.20.2-otp-29/.mix/escripts/livebook",
     "chat.tools.terminal.autoApprove": {
         "mix": true,
         "cd": true,

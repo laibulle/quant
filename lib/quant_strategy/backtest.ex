@@ -261,7 +261,7 @@ defmodule Quant.Strategy.Backtest do
     trade_returns = final_state.trades |> Enum.map(& &1.return)
 
     win_rate =
-      if length(trade_returns) > 0 do
+      if trade_returns != [] do
         winning_trades = Enum.count(trade_returns, &(&1 > 0))
         winning_trades / length(trade_returns)
       else

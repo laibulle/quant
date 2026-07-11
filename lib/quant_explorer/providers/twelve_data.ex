@@ -394,7 +394,7 @@ defmodule Quant.Explorer.Providers.TwelveData do
 
     successful_results = Enum.filter(results, &match?({:ok, _}, &1))
 
-    if length(successful_results) > 0 do
+    if successful_results != [] do
       data = Enum.map(successful_results, fn {:ok, row} -> row end)
       {:ok, DataFrame.new(data)}
     else
@@ -487,6 +487,9 @@ defmodule Quant.Explorer.Providers.TwelveData do
 
   defp parse_profile_response(body) do
     case HttpClientConfig.decode_json(body) do
+      {:ok, %{"code" => code, "message" => message}} ->
+        handle_api_error(code, message)
+
       {:ok, profile_data} when is_map(profile_data) ->
         profile = %{
           "symbol" => Map.get(profile_data, "symbol"),
@@ -504,9 +507,6 @@ defmodule Quant.Explorer.Providers.TwelveData do
         }
 
         {:ok, profile}
-
-      {:ok, %{"code" => code, "message" => message}} ->
-        handle_api_error(code, message)
 
       {:error, reason} ->
         {:error, {:parse_error, reason}}

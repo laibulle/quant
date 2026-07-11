@@ -39,8 +39,6 @@ defmodule Quant.Explorer do
   alias Explorer.DataFrame
   alias Quant.Explorer.{Config, RateLimiter, SchemaStandardizer}
 
-  require Logger
-
   @type symbol :: String.t()
   @type symbols :: [symbol()]
   @type provider :: atom()

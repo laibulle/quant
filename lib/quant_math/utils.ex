@@ -130,21 +130,19 @@ defmodule Quant.Math.Utils do
     end
   end
 
+  defp typeof(value) when is_boolean(value), do: :boolean
   defp typeof(value) when is_atom(value), do: :atom
   defp typeof(value) when is_binary(value), do: :binary
   defp typeof(value) when is_bitstring(value), do: :bitstring
-  defp typeof(value) when is_boolean(value), do: :boolean
   defp typeof(value) when is_float(value), do: :float
   defp typeof(value) when is_function(value), do: :function
   defp typeof(value) when is_integer(value), do: :integer
   defp typeof(value) when is_list(value), do: :list
   defp typeof(value) when is_map(value), do: :map
-  defp typeof(value) when is_number(value), do: :number
   defp typeof(value) when is_pid(value), do: :pid
   defp typeof(value) when is_port(value), do: :port
   defp typeof(value) when is_reference(value), do: :reference
   defp typeof(value) when is_tuple(value), do: :tuple
-  defp typeof(_), do: :unknown
 
   @doc """
   Validate that a column exists in the DataFrame and raise if not.

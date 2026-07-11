@@ -19,8 +19,8 @@ jobs:
       matrix:
         include:
           # Latest stable versions
-          - elixir: '1.18.4'
-            otp: '27.2'
+          - elixir: '1.20.2'
+            otp: '29.0.3'
             python: '3.13'
             coverage: true
 
@@ -67,7 +67,7 @@ jobs:
       run: mix credo --strict
 
     - name: Compile project
-      run: mix compile --warnings-as-errors
+      run: mix compile
 
     - name: Run tests (without Python validation)
       run: mix test --exclude python_validation
@@ -94,8 +94,8 @@ jobs:
     - name: Set up Elixir
       uses: erlef/setup-beam@v1
       with:
-        elixir-version: '1.18.4'
-        otp-version: '27.2'
+        elixir-version: '1.20.2'
+        otp-version: '29.0.3'
 
     - name: Restore dependencies cache
       uses: actions/cache@v4
@@ -144,8 +144,8 @@ jobs:
 #     - name: Set up Elixir
 #       uses: erlef/setup-beam@v1
 #       with:
-#         elixir-version: '1.18.4'
-#         otp-version: '27.2'
+#         elixir-version: '1.20.2'
+#         otp-version: '29.0.3'
 
 #     - name: Restore dependencies cache
 #       uses: actions/cache@v4
@@ -178,8 +178,8 @@ jobs:
 #     - name: Set up Elixir
 #       uses: erlef/setup-beam@v1
 #       with:
-#         elixir-version: '1.18.4'
-#         otp-version: '27.2'
+#         elixir-version: '1.20.2'
+#         otp-version: '29.0.3'
 
 #     - name: Restore dependencies cache
 #       uses: actions/cache@v4

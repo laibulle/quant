@@ -103,7 +103,7 @@ defmodule Quant.Strategy.Optimization.BenchmarkTest do
       assert time_streaming > 0
       assert DataFrame.n_rows(regular_results) == 8
       # At least one chunk
-      assert length(stream_results) >= 1
+      assert stream_results != []
 
       # Verify streaming results are valid
       Enum.each(stream_results, fn result ->
@@ -134,8 +134,8 @@ defmodule Quant.Strategy.Optimization.BenchmarkTest do
       large_results = Enum.to_list(large_stream)
 
       # Verify streaming works for both sizes
-      assert length(small_results) >= 1
-      assert length(large_results) >= 1
+      assert small_results != []
+      assert large_results != []
 
       # All chunks should be successful
       Enum.each(small_results ++ large_results, fn result ->
@@ -170,7 +170,7 @@ defmodule Quant.Strategy.Optimization.BenchmarkTest do
 
       # Verify all strategies processed successfully
       successful_results = Enum.filter(results, & &1.success)
-      assert length(successful_results) >= 1
+      assert successful_results != []
 
       # Verify timing measurements
       Enum.each(successful_results, fn result ->

@@ -335,7 +335,7 @@ defmodule Quant.Math.MovingAverages.KAMAPythonValidationTest do
           end
         end
 
-        if length(trend_valid) > 0 && length(choppy_valid) > 0 do
+        if trend_valid != [] && choppy_valid != [] do
           final_trend = List.last(trend_valid)
           final_choppy = List.last(choppy_valid)
 

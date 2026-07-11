@@ -316,7 +316,7 @@ defmodule Quant.Math.MovingAverages.HMAPythonValidationTest do
           IO.puts("   Python WMA(#{period}): #{Float.round(wma_full, 4)}")
           IO.puts("   Expected Raw HMA: #{Float.round(expected_raw_hma, 4)}")
 
-          if length(elixir_valid) > 0 do
+          if elixir_valid != [] do
             elixir_final = List.last(elixir_valid)
             IO.puts("   Elixir Final HMA: #{Float.round(elixir_final, 4)}")
 
@@ -330,7 +330,7 @@ defmodule Quant.Math.MovingAverages.HMAPythonValidationTest do
           IO.puts("   Sqrt period: #{round(:math.sqrt(period))}")
         end
 
-        if length(elixir_valid) > 0 do
+        if elixir_valid != [] do
           IO.puts("   ✅ HMA algorithm steps are working (produces valid results)")
         else
           IO.puts("   ⚠️  No valid HMA values produced - check algorithm implementation")

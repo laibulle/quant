@@ -25,7 +25,7 @@ defmodule Quant.Math.DEMATest do
 
       # Valid values should be present after sufficient data
       valid_values = Enum.filter(values, &(&1 != :nan))
-      assert length(valid_values) > 0
+      assert valid_values != []
 
       # DEMA should be numeric and finite
       assert Enum.all?(valid_values, &is_float/1)
@@ -80,7 +80,7 @@ defmodule Quant.Math.DEMATest do
 
       # Should have some valid values
       valid_values = Enum.filter(values, &(&1 != :nan))
-      assert length(valid_values) > 0
+      assert valid_values != []
 
       # All valid values should be numeric
       assert Enum.all?(valid_values, &is_float/1)
@@ -238,7 +238,7 @@ defmodule Quant.Math.DEMATest do
 
       # Valid DEMA values should be within reasonable range of the input prices
       valid_values = Enum.filter(values, &(&1 != :nan))
-      assert length(valid_values) > 0
+      assert valid_values != []
 
       # All valid values should be reasonable (within expanded price range)
       assert Enum.all?(valid_values, &(&1 >= 90.0 and &1 <= 130.0))
@@ -285,7 +285,7 @@ defmodule Quant.Math.DEMATest do
 
       # Should have some valid values after the initial NaN period
       valid_values = Enum.filter(values, &(&1 != :nan))
-      assert length(valid_values) >= 1
+      assert valid_values != []
 
       # All valid values should be finite numbers
       assert Enum.all?(valid_values, fn val ->

@@ -6,7 +6,8 @@ defmodule Quant.Explorer.MixProject do
     [
       app: :quant,
       version: "0.1.0-alpha.1",
-      elixir: "~> 1.18",
+      elixir: "~> 1.20",
+      elixirc_options: [warnings_as_errors: true],
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       description: description(),
@@ -59,16 +60,15 @@ defmodule Quant.Explorer.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:explorer, "~> 0.11"},
+      {:explorer, "~> 0.12"},
       {:nx, "~> 0.10"},
-      {:decimal, "~> 2.0"},
+      {:decimal, "~> 3.1"},
       {:telemetry, "~> 1.0"},
       {:certifi, "~> 2.15"},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       {:git_hooks, "0.8.1", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:bypass, "~> 2.1", only: :test},
       {:excoveralls, "~> 0.18", only: :test},
       {:pythonx, "~> 0.2", only: :test}
     ]

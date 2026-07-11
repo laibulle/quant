@@ -201,67 +201,36 @@ defmodule Quant.Explorer.TestHelper do
   end
 
   @doc """
-  Bypass helper for mocking HTTP responses in tests.
+  Converts endpoint definitions into HTTP mock responses keyed by request path.
   """
-  defmacro with_bypass(opts, do: block) do
+  def mock_http_paths(path: path, method: _method, response: response) do
+    [{path, response}]
+  end
+
+  def mock_http_paths(endpoints) when is_list(endpoints) do
+    Enum.map(endpoints, fn
+      {path, _method, response} when is_binary(path) -> {path, response}
+      %{path: path, method: _method, response: response} -> {path, response}
+    end)
+  end
+
+  @doc """
+  Executes a test block with HTTP responses mocked by request path.
+  """
+  defmacro with_http_mock_paths(opts, do: block) do
     quote do
-      bypass = Bypass.open()
+      mocks = QE.TestHelper.mock_http_paths(unquote(opts))
 
-      # Configure the bypass based on the options
-      case unquote(opts) do
-        # Single endpoint
-        [path: path, method: method, response: response] ->
-          method_atom =
-            if is_binary(method),
-              do: String.to_existing_atom(String.downcase(method)),
-              else: method
-
-          Bypass.expect_once(bypass, method_atom, path, fn conn ->
-            QE.TestHelper.handle_bypass_response(conn, response)
-          end)
-
-        # Multiple endpoints
-        endpoints when is_list(endpoints) ->
-          for endpoint <- endpoints do
-            {path, method, response} =
-              case endpoint do
-                {path, method, response} when is_binary(path) -> {path, method, response}
-                %{path: path, method: method, response: response} -> {path, method, response}
-              end
-
-            method_atom =
-              if is_binary(method),
-                do: String.to_existing_atom(String.downcase(method)),
-                else: method
-
-            Bypass.expect_once(bypass, method_atom, path, fn conn ->
-              QE.TestHelper.handle_bypass_response(conn, response)
-            end)
-          end
-      end
+      QE.TestHelper.mock_http(mocks)
+      original_http_client = Application.get_env(:quant, :http_client, QE.HttpClient)
+      Application.put_env(:quant, :http_client, QE.HttpClient.Mock)
 
       try do
         unquote(block)
       after
-        Bypass.down(bypass)
+        Application.put_env(:quant, :http_client, original_http_client)
+        QE.HttpMock.reset()
       end
     end
-  end
-
-  # Helper function to handle different response types with proper pattern matching
-  def handle_bypass_response(conn, response) when is_binary(response) do
-    conn
-    |> Plug.Conn.put_resp_content_type("application/json")
-    |> Plug.Conn.resp(200, response)
-  end
-
-  def handle_bypass_response(conn, %{status: status}) do
-    Plug.Conn.resp(conn, status, "")
-  end
-
-  def handle_bypass_response(conn, response) do
-    conn
-    |> Plug.Conn.put_resp_content_type("application/json")
-    |> Plug.Conn.resp(200, inspect(response))
   end
 end
