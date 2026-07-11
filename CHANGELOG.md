@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Redis is no longer advertised as a supported rate-limiting backend. The checked-in implementation uses ETS only.
 
-## [0.1.0] - 2025-01-15
+## [0.1.0-alpha.1] - 2025-01-15
 
 ### Added
 - **Comprehensive Financial Data Library** with standardized API across multiple providers
@@ -61,8 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### License
 - **Creative Commons Attribution-NonCommercial 4.0 International License**
 - Free for personal, educational, research, and non-profit use
-- Commercial licensing available separately
-- Protects against unauthorized commercial exploitation while ensuring community access
+- No commercial license or commercial support is offered
+- Protects against commercial exploitation while ensuring community access
 
-[Unreleased]: https://github.com/the-nerd-company/quant/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/the-nerd-company/quant/releases/tag/v0.1.0
+[Unreleased]: https://github.com/the-nerd-company/quant/compare/v0.1.0-alpha.1...HEAD
+[0.1.0-alpha.1]: https://github.com/the-nerd-company/quant/releases/tag/v0.1.0-alpha.1

@@ -2,8 +2,8 @@
 
 [![Coverage Status](https://coveralls.io/repos/github/the-nerd-company/quant/badge.svg?branch=main)](https://coveralls.io/github/the-nerd-company/quant?branch=main)
 [![CI](https://github.com/the-nerd-company/quant/workflows/CI/badge.svg)](https://github.com/the-nerd-company/quant/actions)
-[![Elixir](https://img.shields.io/badge/elixir-1.20%2B-purple.svg)](https://elixir-lang.org)
-[![OTP](https://img.shields.io/badge/OTP-29%2B-blue.svg)](https://erlang.org)
+[![Elixir](https://img.shields.io/badge/elixir-latest%20stable-purple.svg)](https://elixir-lang.org)
+[![OTP](https://img.shields.io/badge/OTP-latest%20stable-blue.svg)](https://erlang.org)
 [![License](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
 
 [![Run in Livebook](https://livebook.dev/badge/v1/blue.svg)](https://livebook.dev/run?url=https%3A%2F%2Fraw.githubusercontent.com%2Fthe-nerd-company%2Fquant%2Frefs%2Fheads%2Fmain%2Fexamples%2Fbacktest_examples.livemd)
@@ -898,8 +898,8 @@ This project is licensed under CC BY-NC 4.0, which means:
 
 ❌ **You cannot:**
 
-- Use for commercial purposes without permission
+- Use for commercial purposes
 - Sell products or services based on this code
 - Use in commercial trading systems or financial products
 
-This ensures the library remains free for the community while protecting against unauthorized commercial exploitation.
+No commercial license or commercial support is offered.

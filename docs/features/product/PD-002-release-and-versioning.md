@@ -18,3 +18,5 @@ depends_on: [QL-001, PD-001]
   migration notes for schema or backtest semantics.
 - A release is cut only after QL-001 thresholds and QL-002 fixture contracts
   pass.
+- The current pre-release identifier in `mix.exs`, changelog section and Git tag
+  must be identical.

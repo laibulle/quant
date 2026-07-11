@@ -15,18 +15,17 @@ not the usual license choice for an Elixir/Hex library.
 
 ## Decision
 
-Retain **CC BY-NC 4.0** with a separate commercial license. Its NonCommercial
-term prohibits use primarily intended for commercial advantage or monetary
-compensation. The policy must be reviewed with legal counsel before a release
-or any change to contributor terms.
+Retain **CC BY-NC 4.0**. Its NonCommercial term prohibits use primarily
+intended for commercial advantage or monetary compensation. No commercial
+license and no commercial support are offered.
 
 ## Acceptance criteria
 
 - `LICENSE`, `mix.exs`, README, Hex metadata and contributor guidance state the
   same CC BY-NC policy.
 - The change log records the effective date and compatibility implications.
-- Any contributor-license or commercial-license process is documented before
-  accepting external contributions.
+- Contribution terms must not imply that commercial permissions or support can
+  be obtained from the maintainers.
 
 ## References
 

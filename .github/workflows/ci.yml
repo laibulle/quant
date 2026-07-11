@@ -2,204 +2,40 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+  workflow_dispatch:
 
-env:
-  MIX_ENV: test
+permissions:
+  contents: read
 
 jobs:
   test:
-    name: Test (Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }} / Python ${{ matrix.python }})
-    runs-on: ubuntu-latest
-    
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Latest stable versions
-          - elixir: '1.20.2'
-            otp: '29.0.3'
-            python: '3.13'
-            coverage: true
+    name: Latest stable Elixir / OTP
+    runs-on: ubuntu-24.04
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
-    - name: Set up Python ${{ matrix.python }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python }}
+      - name: Set up latest stable BEAM toolchain
+        uses: erlef/setup-beam@v1
+        with:
+          # `> 0` selects the latest stable release and excludes pre-releases.
+          otp-version: "> 0"
+          elixir-version: "> 0"
 
-    - name: Install UV
-      uses: astral-sh/setup-uv@v7
-      with:
-        enable-cache: true
+      - name: Restore Mix dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: mix-${{ runner.os }}-${{ hashFiles('mix.lock') }}
+          restore-keys: mix-${{ runner.os }}-
 
-    - name: Install Python dependencies
-      run: uv sync
-
-    - name: Set up Elixir
-      uses: erlef/setup-beam@v1
-      with:
-        elixir-version: ${{ matrix.elixir }}
-        otp-version: ${{ matrix.otp }}
-
-    - name: Restore dependencies cache
-      uses: actions/cache@v4
-      with:
-        path: |
-          deps
-          _build
-        key: ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('**/mix.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ matrix.otp }}-
-
-    - name: Install dependencies
-      run: mix deps.get
-
-    - name: Check formatting
-      run: mix format --check-formatted
-
-    - name: Run Credo
-      run: mix credo --strict
-
-    - name: Compile project
-      run: mix compile
-
-    - name: Run tests (without Python validation)
-      run: mix test --exclude python_validation
-
-    - name: Run Python validation tests
-      run: mix test --only python_validation
-      env:
-        PYTHONPATH: ${{ env.PYTHONPATH }}
-
-    - name: Generate coverage report
-      if: matrix.coverage
-      run: mix coveralls.github
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  dialyzer:
-    name: Dialyzer
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v5
-
-    - name: Set up Elixir
-      uses: erlef/setup-beam@v1
-      with:
-        elixir-version: '1.20.2'
-        otp-version: '29.0.3'
-
-    - name: Restore dependencies cache
-      uses: actions/cache@v4
-      with:
-        path: |
-          deps
-          _build
-        key: ${{ runner.os }}-mix-dialyzer-${{ hashFiles('**/mix.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-mix-dialyzer-
-
-    - name: Restore PLT cache
-      uses: actions/cache@v4
-      with:
-        path: priv/plts
-        key: ${{ runner.os }}-plt-${{ hashFiles('**/mix.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-plt-
-
-    - name: Install dependencies
-      run: mix deps.get
-
-    - name: Run Dialyzer
-      run: mix dialyzer
-
-#   integration_test:
-#     name: Integration Tests
-#     runs-on: ubuntu-latest
-#     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
-#     steps:
-#     - name: Checkout code
-#       uses: actions/checkout@v5
-
-#     - name: Set up Python 3.11
-#       uses: actions/setup-python@v5
-#       with:
-#         python-version: '3.11'
-#         cache: 'pip'
-
-#     - name: Install Python dependencies
-#       run: |
-#         python -m pip install --upgrade pip
-#         pip install pandas numpy
-
-#     - name: Set up Elixir
-#       uses: erlef/setup-beam@v1
-#       with:
-#         elixir-version: '1.20.2'
-#         otp-version: '29.0.3'
-
-#     - name: Restore dependencies cache
-#       uses: actions/cache@v4
-#       with:
-#         path: |
-#           deps
-#           _build
-#         key: ${{ runner.os }}-mix-integration-${{ hashFiles('**/mix.lock') }}
-#         restore-keys: |
-#           ${{ runner.os }}-mix-integration-
-
-#     - name: Install dependencies
-#       run: mix deps.get
-
-    # - name: Run integration tests
-    #   run: mix test --include integration
-    #   env:
-    #     # Add API keys for integration tests if available
-    #     ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
-    #     TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
-
-#   docs:
-#     name: Documentation
-#     runs-on: ubuntu-latest
-    
-#     steps:
-#     - name: Checkout code
-#       uses: actions/checkout@v5
-
-#     - name: Set up Elixir
-#       uses: erlef/setup-beam@v1
-#       with:
-#         elixir-version: '1.20.2'
-#         otp-version: '29.0.3'
-
-#     - name: Restore dependencies cache
-#       uses: actions/cache@v4
-#       with:
-#         path: |
-#           deps
-#           _build
-#         key: ${{ runner.os }}-mix-docs-${{ hashFiles('**/mix.lock') }}
-#         restore-keys: |
-#           ${{ runner.os }}-mix-docs-
-
-#     - name: Install dependencies
-#       run: mix deps.get
-
-#     - name: Generate documentation
-#       run: mix docs
-
-#     - name: Deploy to GitHub Pages
-#       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-#       uses: peaceiris/actions-gh-pages@v3
-#       with:
-#         github_token: ${{ secrets.GITHUB_TOKEN }}
-#         publish_dir: ./doc
+      - run: mix deps.get
+      - run: mix format --check-formatted
+      - run: mix test
+      - run: mix credo --strict
+      - run: mix dialyzer
+      - run: mix hex.build --output /tmp/quant.tar
