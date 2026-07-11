@@ -67,12 +67,15 @@ defmodule Quant.Explorer.HttpMock do
   defp find_matching_mock(url, mocks) do
     Enum.find_value(mocks, fn {pattern, response} ->
       if url_matches?(url, pattern) do
-        response
+        resolve_response(response, url)
       else
         nil
       end
     end)
   end
+
+  defp resolve_response(response, url) when is_function(response, 1), do: response.(url)
+  defp resolve_response(response, _url), do: response
 
   defp url_matches?(url, pattern) when is_binary(pattern) do
     String.contains?(url, pattern)

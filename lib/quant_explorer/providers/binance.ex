@@ -104,13 +104,9 @@ defmodule Quant.Explorer.Providers.Binance do
     start_time = Keyword.get(opts, :start_time) || Keyword.get(opts, :start_date)
     end_time = Keyword.get(opts, :end_time) || Keyword.get(opts, :end_date)
 
-    with :ok <- validate_interval(interval),
-         {:ok, limit} <- resolve_limit(interval, limit, start_time, end_time),
-         :ok <- RateLimiter.check_and_consume(:binance, :klines, limit: limit),
-         data_result <- fetch_klines(symbol, interval, limit, start_time, end_time) do
-      parse_klines_data(data_result, symbol)
-    else
-      {:error, reason} -> {:error, reason}
+    case validate_interval(interval) do
+      :ok -> fetch_history(symbol, interval, limit, start_time, end_time)
+      {:error, _reason} = error -> error
     end
   end
 
@@ -160,17 +156,80 @@ defmodule Quant.Explorer.Providers.Binance do
   Automatically calculates limit based on time range and interval.
   """
   def history_range(symbol, interval, start_time, end_time) when is_binary(symbol) do
-    with {:ok, limit} <- compute_klines_limit(interval, start_time, end_time) do
-      history(symbol,
-        interval: interval,
-        limit: limit,
-        start_time: start_time,
-        end_time: end_time
-      )
-    end
+    history(symbol, interval: interval, start_time: start_time, end_time: end_time)
   end
 
   # Private Functions
+
+  defp fetch_history(symbol, interval, limit, nil, nil) do
+    with :ok <- validate_limit(limit),
+         {:ok, data} <- fetch_klines_with_rate_limit(symbol, interval, limit, nil, nil) do
+      parse_klines_data({:ok, data}, symbol)
+    end
+  end
+
+  defp fetch_history(_symbol, _interval, _limit, nil, _end_time),
+    do: {:error, :incomplete_time_range}
+
+  defp fetch_history(_symbol, _interval, _limit, _start_time, nil),
+    do: {:error, :incomplete_time_range}
+
+  defp fetch_history(symbol, interval, _limit, start_time, end_time) do
+    with {:ok, pages} <- build_page_requests(interval, start_time, end_time),
+         {:ok, klines} <- fetch_kline_pages(symbol, interval, pages) do
+      parse_klines_data({:ok, klines}, symbol)
+    end
+  end
+
+  defp fetch_kline_pages(symbol, interval, pages) do
+    pages
+    |> Enum.reduce_while({:ok, []}, fn {start_ms, end_ms, limit}, {:ok, acc} ->
+      case fetch_klines_with_rate_limit(symbol, interval, limit, start_ms, end_ms) do
+        {:ok, page} -> {:cont, {:ok, [page | acc]}}
+        {:error, reason} -> {:halt, {:error, {:page_failed, start_ms, reason}}}
+      end
+    end)
+    |> case do
+      {:ok, pages} ->
+        {:ok,
+         pages
+         |> Enum.reverse()
+         |> Enum.flat_map(& &1)
+         |> Enum.uniq_by(&hd/1)
+         |> Enum.sort_by(&hd/1)}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp fetch_klines_with_rate_limit(symbol, interval, limit, start_time, end_time) do
+    with :ok <- RateLimiter.check_and_consume(:binance, :klines, limit: limit) do
+      fetch_klines(symbol, interval, limit, start_time, end_time)
+    end
+  end
+
+  defp build_page_requests(interval, start_time, end_time) do
+    with {:ok, interval_ms} <- interval_ms(interval),
+         {:ok, start_ms} <- timestamp_to_ms(start_time),
+         {:ok, end_ms} <- timestamp_to_ms(end_time),
+         :ok <- validate_time_range(start_ms, end_ms) do
+      {:ok, page_requests(start_ms, end_ms, interval_ms)}
+    end
+  end
+
+  defp page_requests(start_ms, end_ms, interval_ms) do
+    Stream.unfold(start_ms, fn
+      current when current > end_ms ->
+        nil
+
+      current ->
+        page_end = min(current + interval_ms * 999, end_ms)
+        limit = div(page_end - current, interval_ms) + 1
+        {{current, page_end, limit}, page_end + interval_ms}
+    end)
+    |> Enum.to_list()
+  end
 
   defp fetch_klines(symbol, interval, limit, start_time, end_time) do
     url = "#{@base_url}/api/v3/klines"
@@ -268,10 +327,6 @@ defmodule Quant.Explorer.Providers.Binance do
     error ->
       Logger.error("Failed to parse Binance klines data: #{inspect(error)}")
       {:error, {:parse_error, "Invalid klines data format"}}
-  end
-
-  defp parse_klines_data({:error, reason}, _symbol) do
-    {:error, reason}
   end
 
   defp parse_kline_row(
@@ -415,51 +470,24 @@ defmodule Quant.Explorer.Providers.Binance do
     {:error, {:invalid_limit, "Limit must be between 1 and 1000, got: #{limit}"}}
   end
 
-  defp compute_klines_limit(interval, start_time, end_time) do
-    case Map.get(@interval_ms, interval) do
-      nil ->
-        {:error, {:invalid_interval, interval}}
-
-      interval_ms ->
-        start_ms = datetime_to_ms(start_time)
-        end_ms = datetime_to_ms(end_time)
-        diff_ms = end_ms - start_ms
-        limit = div(diff_ms, interval_ms) + 1
-
-        cond do
-          limit <= 0 ->
-            {:error, {:invalid_time_range, "End time must be after start time"}}
-
-          limit > 1000 ->
-            {:error,
-             {:limit_exceeded, "Time range too large, would require #{limit} klines (max: 1000)"}}
-
-          true ->
-            {:ok, limit}
-        end
+  defp interval_ms(interval) do
+    case Map.fetch(@interval_ms, interval) do
+      {:ok, milliseconds} -> {:ok, milliseconds}
+      :error -> {:error, {:invalid_interval, interval}}
     end
   end
 
-  defp datetime_to_ms(%DateTime{} = dt), do: DateTime.to_unix(dt, :millisecond)
+  defp timestamp_to_ms(%DateTime{} = datetime),
+    do: {:ok, DateTime.to_unix(datetime, :millisecond)}
 
-  defp datetime_to_ms(%Date{} = date),
-    do: date |> DateTime.new!(~T[00:00:00], "Etc/UTC") |> DateTime.to_unix(:millisecond)
+  defp timestamp_to_ms(%Date{} = date),
+    do: {:ok, date |> DateTime.new!(~T[00:00:00], "Etc/UTC") |> DateTime.to_unix(:millisecond)}
 
-  defp datetime_to_ms(timestamp) when is_integer(timestamp), do: timestamp
+  defp timestamp_to_ms(timestamp) when is_integer(timestamp), do: {:ok, timestamp}
+  defp timestamp_to_ms(value), do: {:error, {:invalid_timestamp, value}}
 
-  defp resolve_limit(_interval, limit, nil, _end_time), do: validate_limit_result(limit)
-  defp resolve_limit(_interval, limit, _start_time, nil), do: validate_limit_result(limit)
-
-  defp resolve_limit(interval, _limit, start_time, end_time) do
-    compute_klines_limit(interval, start_time, end_time)
-  end
-
-  defp validate_limit_result(limit) do
-    case validate_limit(limit) do
-      :ok -> {:ok, limit}
-      {:error, _} = error -> error
-    end
-  end
+  defp validate_time_range(start_ms, end_ms) when start_ms <= end_ms, do: :ok
+  defp validate_time_range(_start_ms, _end_ms), do: {:error, :invalid_time_range}
 
   defp parse_float(value) when is_binary(value) do
     case Float.parse(value) do

@@ -8,6 +8,10 @@ defmodule Quant.Explorer.MixProject do
       version: "0.1.0-alpha.1",
       elixir: "~> 1.20",
       elixirc_options: [warnings_as_errors: true],
+      test_ignore_filters: [
+        &String.starts_with?(&1, "test/support/"),
+        "test/integration/test_runner.ex"
+      ],
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       description: description(),

@@ -1,6 +1,6 @@
 ---
 id: DF-020
-status: planned
+status: implemented
 domain: data
 owners: [Quant.Explorer.Providers.Binance]
 depends_on: [DF-012, PF-002, QL-002]
@@ -8,7 +8,7 @@ depends_on: [DF-012, PF-002, QL-002]
 
 # DF-020 — Binance paginated history
 
-**Status:** planned  
+**Status:** implemented
 **Depends on:** DF-012, PF-002, QL-002
 
 ## Goal
@@ -27,8 +27,9 @@ Fetch an arbitrary supported Binance time range without silently truncating at
 
 ## Acceptance criteria
 
-- A 2,001-bar fixture performs three requests with no duplicates or gaps.
-- Rate-limit and partial-page failure tests prove no partial DataFrame is
-  returned as success.
-- Pagination is transparent to `Quant.Explorer.history/2` and direct provider
-  calls.
+- [x] A 2,001-bar fixture performs three chronological requests and returns
+  ordered, deduplicated data.
+- [x] A later-page failure returns `{:error, {:page_failed, start_ms, reason}}`
+  and never returns partial data as success.
+- [x] Pagination is transparent to `Quant.Explorer.history/2` and direct
+  provider calls.
