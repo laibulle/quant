@@ -46,22 +46,43 @@ defmodule Quant.Explorer.CacheTest do
 
   test "coalesces concurrent misses for the same key" do
     {:ok, counter} = Agent.start_link(fn -> 0 end)
+    parent = self()
 
     fetcher = fn ->
       Agent.update(counter, &(&1 + 1))
-      Process.sleep(20)
+      send(parent, {:fetch_started, self()})
+
+      receive do
+        :complete_fetch -> :ok
+      end
+
       {:ok, :data}
     end
 
     first = Task.async(fn -> Cache.fetch(:coalesced, fetcher) end)
-    Process.sleep(5)
+    assert_receive {:fetch_started, fetcher_pid}
     second = Task.async(fn -> Cache.fetch(:coalesced, fetcher) end)
+    wait_for_coalesced_fetch()
+    send(fetcher_pid, :complete_fetch)
 
     assert [{:coalesced, {:ok, :data}}, {:miss, {:ok, :data}}] =
              [Task.await(first), Task.await(second)] |> Enum.sort()
 
     assert Agent.get(counter, & &1) == 1
     assert %{coalesced: 1, writes: 1} = Cache.stats()
+  end
+
+  defp wait_for_coalesced_fetch(attempts \\ 20)
+
+  defp wait_for_coalesced_fetch(0), do: flunk("second cache request was not coalesced")
+
+  defp wait_for_coalesced_fetch(attempts) do
+    if Cache.stats().coalesced == 1 do
+      :ok
+    else
+      Process.sleep(5)
+      wait_for_coalesced_fetch(attempts - 1)
+    end
   end
 
   test "invalidates explicit history ranges that overlap the requested range" do

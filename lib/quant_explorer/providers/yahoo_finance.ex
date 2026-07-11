@@ -415,10 +415,9 @@ defmodule Quant.Explorer.Providers.YahooFinance do
 
     # Build DataFrame data
     data =
-      0..(length(timestamps) - 1)
-      |> Enum.map(fn idx ->
-        ts = Enum.at(timestamps, idx)
-        datetime = DateTime.from_unix!(ts, :second)
+      timestamps
+      |> Enum.with_index()
+      |> Enum.map(fn {timestamp, idx} ->
         open = Enum.at(opens, idx)
         high = Enum.at(highs, idx)
         low = Enum.at(lows, idx)
@@ -428,7 +427,7 @@ defmodule Quant.Explorer.Providers.YahooFinance do
 
         %{
           "symbol" => symbol,
-          "timestamp" => datetime,
+          "timestamp" => parse_unix_timestamp(timestamp),
           "open" => ensure_float(open),
           "high" => ensure_float(high),
           "low" => ensure_float(low),
@@ -461,7 +460,7 @@ defmodule Quant.Explorer.Providers.YahooFinance do
               "change" => ensure_float(Map.get(quote, "regularMarketChange")),
               "change_percent" => ensure_float(Map.get(quote, "regularMarketChangePercent")),
               "volume" => ensure_integer(Map.get(quote, "regularMarketVolume")),
-              "timestamp" => DateTime.utc_now(),
+              "timestamp" => parse_unix_timestamp(Map.get(quote, "regularMarketTime")),
               "market_state" => Map.get(quote, "marketState"),
               "currency" => Map.get(quote, "currency")
             }
@@ -590,10 +589,12 @@ defmodule Quant.Explorer.Providers.YahooFinance do
 
   defp ensure_float(value) when is_binary(value) do
     case Float.parse(value) do
-      {float, _} -> float
-      :error -> nil
+      {float, ""} -> float
+      _ -> nil
     end
   end
+
+  defp ensure_float(_), do: nil
 
   defp ensure_integer(nil), do: nil
   defp ensure_integer(value) when is_integer(value), do: value
@@ -601,8 +602,26 @@ defmodule Quant.Explorer.Providers.YahooFinance do
 
   defp ensure_integer(value) when is_binary(value) do
     case Integer.parse(value) do
-      {int, _} -> int
-      :error -> nil
+      {int, ""} -> int
+      _ -> ensure_float_volume(value)
     end
   end
+
+  defp ensure_integer(_), do: nil
+
+  defp ensure_float_volume(value) do
+    case Float.parse(value) do
+      {float, ""} -> trunc(float)
+      _ -> nil
+    end
+  end
+
+  defp parse_unix_timestamp(timestamp) when is_integer(timestamp) do
+    case DateTime.from_unix(timestamp) do
+      {:ok, datetime} -> datetime
+      {:error, _} -> nil
+    end
+  end
+
+  defp parse_unix_timestamp(_), do: nil
 end

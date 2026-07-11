@@ -29,3 +29,26 @@ Make correctness claims proportionate to automated evidence.
   `SchemaStandardizer`, cache and rate limiter.
 - 80% relevant-line coverage for each provider adapter.
 - No test warning from support-file discovery or deliberate invalid-type tests.
+
+## Implemented coverage
+
+- [x] `DataTransformer` is covered for timestamp, number and volume
+  normalization, history/quote transformation, CSV conversion and cleaning.
+- [x] `HttpClient` is covered for JSON decoding, status classification, provider
+  error extraction and unsupported-method rejection without network access.
+- [x] `HttpClient` is exercised against a local TCP HTTP server for encoded GET
+  queries, filtered headers, POST bodies and content types.
+- [x] `Config` is covered for nested lookup, runtime API-key resolution,
+  provider overrides, derived settings and missing-config validation.
+- [x] `RateLimiter` is covered end to end for pre-flight checks, consumption,
+  reset, provider quota exhaustion, Binance weights and immediate availability.
+- [x] `SchemaStandardizer` is covered for provider parameter translation,
+  validation, historical/quote/search normalization and strict numeric parsing.
+- [x] `TwelveData` is covered for intraday timestamp parsing, provider quote
+  timestamps, malformed numeric values, company profiles and forex rates.
+- [x] `CoinGecko` is covered for source timestamps on simple prices and market
+  ranking data, incomplete metadata and nullable market values.
+- [x] `AlphaVantage` is covered for intraday timestamps, quote trading dates
+  and strict numeric parsing.
+- [x] `YahooFinance` is covered for source quote timestamps, empty historical
+  data, company information and option chains.

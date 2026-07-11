@@ -406,11 +406,9 @@ defmodule Quant.Explorer.Providers.TwelveData do
       {:ok, %{"values" => values}} when is_list(values) ->
         data =
           Enum.map(values, fn item ->
-            {:ok, datetime, _} = DateTime.from_iso8601("#{item["datetime"]}T00:00:00Z")
-
             %{
               "symbol" => symbol,
-              "timestamp" => datetime,
+              "timestamp" => parse_provider_timestamp(item["datetime"]),
               "open" => ensure_float(item["open"]),
               "high" => ensure_float(item["high"]),
               "low" => ensure_float(item["low"]),
@@ -538,14 +536,12 @@ defmodule Quant.Explorer.Providers.TwelveData do
   defp parse_exchange_rate_response(body, from_currency, to_currency) do
     case HttpClientConfig.decode_json(body) do
       {:ok, %{"rate" => rate, "timestamp" => timestamp}} ->
-        {:ok, datetime, _} = DateTime.from_iso8601(timestamp)
-
         {:ok,
          %{
            "from_currency" => from_currency,
            "to_currency" => to_currency,
            "rate" => ensure_float(rate),
-           "timestamp" => datetime
+           "timestamp" => parse_provider_timestamp(timestamp)
          }}
 
       {:ok, %{"code" => code, "message" => message}} ->
@@ -568,7 +564,8 @@ defmodule Quant.Explorer.Providers.TwelveData do
       "high" => ensure_float(Map.get(quote_data, "high")),
       "low" => ensure_float(Map.get(quote_data, "low")),
       "open" => ensure_float(Map.get(quote_data, "open")),
-      "timestamp" => DateTime.utc_now()
+      "timestamp" =>
+        parse_provider_timestamp(Map.get(quote_data, "timestamp") || quote_data["datetime"])
     }
   end
 
@@ -637,10 +634,12 @@ defmodule Quant.Explorer.Providers.TwelveData do
 
   defp ensure_float(value) when is_binary(value) do
     case Float.parse(value) do
-      {float, _} -> float
-      :error -> nil
+      {float, ""} -> float
+      _ -> nil
     end
   end
+
+  defp ensure_float(_), do: nil
 
   defp ensure_integer(nil), do: nil
   defp ensure_integer(value) when is_integer(value), do: value
@@ -648,8 +647,57 @@ defmodule Quant.Explorer.Providers.TwelveData do
 
   defp ensure_integer(value) when is_binary(value) do
     case Integer.parse(value) do
-      {int, _} -> int
-      :error -> nil
+      {int, ""} -> int
+      _ -> ensure_float_volume(value)
+    end
+  end
+
+  defp ensure_integer(_), do: nil
+
+  defp ensure_float_volume(value) do
+    case Float.parse(value) do
+      {float, ""} -> trunc(float)
+      _ -> nil
+    end
+  end
+
+  defp parse_provider_timestamp(nil), do: nil
+
+  defp parse_provider_timestamp(timestamp) when is_integer(timestamp) do
+    case DateTime.from_unix(timestamp) do
+      {:ok, datetime} -> datetime
+      {:error, _} -> nil
+    end
+  end
+
+  defp parse_provider_timestamp(timestamp) when is_binary(timestamp) do
+    case Integer.parse(timestamp) do
+      {unix_timestamp, ""} -> parse_provider_timestamp(unix_timestamp)
+      _ -> parse_datetime_string(timestamp)
+    end
+  end
+
+  defp parse_provider_timestamp(_), do: nil
+
+  defp parse_datetime_string(timestamp) do
+    normalized_timestamp = String.replace(timestamp, " ", "T")
+
+    case DateTime.from_iso8601(normalized_timestamp) do
+      {:ok, datetime, _offset} -> datetime
+      {:error, _} -> parse_naive_or_date_timestamp(normalized_timestamp)
+    end
+  end
+
+  defp parse_naive_or_date_timestamp(timestamp) do
+    case NaiveDateTime.from_iso8601(timestamp) do
+      {:ok, naive_datetime} ->
+        DateTime.from_naive!(naive_datetime, "Etc/UTC")
+
+      {:error, _} ->
+        case Date.from_iso8601(timestamp) do
+          {:ok, date} -> DateTime.new!(date, ~T[00:00:00], "Etc/UTC")
+          {:error, _} -> nil
+        end
     end
   end
 end

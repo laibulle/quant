@@ -427,7 +427,7 @@ defmodule Quant.Explorer.SchemaStandardizer do
           nil -> nil
           ts when is_binary(ts) -> parse_timestamp_string(ts)
           %DateTime{} = dt -> dt
-          %NaiveDateTime{} = ndt -> DateTime.from_naive!(ndt, "UTC")
+          %NaiveDateTime{} = ndt -> DateTime.from_naive!(ndt, "Etc/UTC")
           unix_timestamp when is_integer(unix_timestamp) -> DateTime.from_unix!(unix_timestamp)
           # Fallback
           _ -> nil
@@ -457,8 +457,8 @@ defmodule Quant.Explorer.SchemaStandardizer do
 
   defp normalize_price_value(price) when is_binary(price) do
     case Float.parse(price) do
-      {float_val, _} -> float_val
-      :error -> nil
+      {float_val, ""} -> float_val
+      _ -> nil
     end
   end
 
@@ -479,12 +479,19 @@ defmodule Quant.Explorer.SchemaStandardizer do
 
   defp normalize_volume_value(vol) when is_binary(vol) do
     case Integer.parse(vol) do
-      {int_val, _} -> int_val
-      :error -> nil
+      {int_val, ""} -> int_val
+      _ -> normalize_float_volume(vol)
     end
   end
 
   defp normalize_volume_value(_), do: nil
+
+  defp normalize_float_volume(vol) do
+    case Float.parse(vol) do
+      {float_val, ""} -> trunc(float_val)
+      _ -> nil
+    end
+  end
 
   defp normalize_change_percent(df) do
     if "change_percent" in DataFrame.names(df) do
@@ -502,8 +509,8 @@ defmodule Quant.Explorer.SchemaStandardizer do
     clean_pct = String.replace(pct_string, ~r/[%\s]/, "")
 
     case Float.parse(clean_pct) do
-      {float_val, _} -> Float.round(float_val, 4)
-      :error -> nil
+      {float_val, ""} -> Float.round(float_val, 4)
+      _ -> nil
     end
   end
 
@@ -536,17 +543,17 @@ defmodule Quant.Explorer.SchemaStandardizer do
   defp normalize_asset_type_value(_), do: "unknown"
 
   defp normalize_match_scores(df) do
-    if "match_score" in DataFrame.names(df) do
-      # Keep as-is if already present
+    existing_scores =
+      if "match_score" in DataFrame.names(df), do: Series.to_list(df["match_score"])
+
+    if existing_scores && Enum.any?(existing_scores, &(not is_nil(&1))) do
+      # Preserve provider scores when at least one value is available.
       df
     else
-      # Add default match score based on position (first result = highest score)
+      # Add default match score based on position (first result = highest score).
       rows = DataFrame.n_rows(df)
-
       scores = generated_match_scores(rows)
-
-      score_series = Series.from_list(scores)
-      DataFrame.put(df, "match_score", score_series)
+      DataFrame.put(df, "match_score", Series.from_list(scores))
     end
   end
 
@@ -580,7 +587,7 @@ defmodule Quant.Explorer.SchemaStandardizer do
     cond do
       String.match?(ts_string, ~r/^\d{4}-\d{2}-\d{2}$/) ->
         {:ok, date} = Date.from_iso8601(ts_string)
-        DateTime.new!(date, ~T[00:00:00], "UTC")
+        DateTime.new!(date, ~T[00:00:00], "Etc/UTC")
 
       String.contains?(ts_string, "T") ->
         case DateTime.from_iso8601(ts_string) do

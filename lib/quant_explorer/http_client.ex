@@ -180,7 +180,7 @@ defmodule Quant.Explorer.HttpClient do
     content_type =
       headers
       |> Enum.find_value(fn {k, v} ->
-        if List.to_string(k) == "content-type", do: v, else: nil
+        if String.downcase(List.to_string(k)) == "content-type", do: v, else: nil
       end)
 
     if content_type, do: content_type, else: ~c"application/octet-stream"

@@ -540,7 +540,7 @@ defmodule Quant.Explorer.Providers.AlphaVantage do
       change: parse_float(global_quote["09. change"]),
       change_percent: parse_change_percent(global_quote["10. change percent"]),
       volume: parse_integer(global_quote["06. volume"]),
-      timestamp: DateTime.utc_now()
+      timestamp: parse_timestamp(global_quote["07. latest trading day"])
     }
 
     {:ok, row}
@@ -577,15 +577,17 @@ defmodule Quant.Explorer.Providers.AlphaVantage do
   end
 
   defp parse_timestamp(timestamp_str) do
-    case DateTime.from_iso8601(timestamp_str <> "T00:00:00Z") do
-      {:ok, datetime, _} ->
-        datetime
+    normalized_timestamp =
+      if is_binary(timestamp_str), do: String.replace(timestamp_str, " ", "T")
 
-      {:error, _} ->
-        # Try parsing as datetime
-        case DateTime.from_iso8601(timestamp_str <> "Z") do
+    case normalized_timestamp do
+      nil ->
+        nil
+
+      timestamp ->
+        case DateTime.from_iso8601(timestamp) do
           {:ok, datetime, _} -> datetime
-          {:error, _} -> DateTime.utc_now()
+          {:error, _} -> parse_naive_or_date_timestamp(timestamp)
         end
     end
   end
@@ -594,23 +596,26 @@ defmodule Quant.Explorer.Providers.AlphaVantage do
 
   defp parse_float(value) when is_binary(value) do
     case Float.parse(value) do
-      {float_val, _} -> float_val
-      :error -> nil
+      {float_val, ""} -> float_val
+      _ -> nil
     end
   end
 
   defp parse_float(value) when is_number(value), do: value / 1.0
+  defp parse_float(_), do: nil
 
   defp parse_integer(nil), do: nil
 
   defp parse_integer(value) when is_binary(value) do
     case Integer.parse(value) do
-      {int_val, _} -> int_val
-      :error -> nil
+      {int_val, ""} -> int_val
+      _ -> parse_float_volume(value)
     end
   end
 
   defp parse_integer(value) when is_integer(value), do: value
+  defp parse_integer(value) when is_float(value), do: trunc(value)
+  defp parse_integer(_), do: nil
 
   defp parse_change_percent(nil), do: nil
 
@@ -619,5 +624,27 @@ defmodule Quant.Explorer.Providers.AlphaVantage do
     value
     |> String.replace("%", "")
     |> parse_float()
+  end
+
+  defp parse_change_percent(_), do: nil
+
+  defp parse_naive_or_date_timestamp(timestamp) do
+    case NaiveDateTime.from_iso8601(timestamp) do
+      {:ok, naive_datetime} ->
+        DateTime.from_naive!(naive_datetime, "Etc/UTC")
+
+      {:error, _} ->
+        case Date.from_iso8601(timestamp) do
+          {:ok, date} -> DateTime.new!(date, ~T[00:00:00], "Etc/UTC")
+          {:error, _} -> nil
+        end
+    end
+  end
+
+  defp parse_float_volume(value) do
+    case Float.parse(value) do
+      {float, ""} -> trunc(float)
+      _ -> nil
+    end
   end
 end

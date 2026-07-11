@@ -254,7 +254,8 @@ defmodule Quant.Explorer.Providers.CoinGecko do
       "vs_currencies" => vs_currency,
       "include_24hr_change" => "true",
       "include_24hr_vol" => "true",
-      "include_market_cap" => "true"
+      "include_market_cap" => "true",
+      "include_last_updated_at" => "true"
     }
 
     headers = build_headers()
@@ -374,19 +375,17 @@ defmodule Quant.Explorer.Providers.CoinGecko do
         data =
           Enum.zip([prices, market_caps, volumes])
           |> Enum.map(fn {[timestamp, price], [_, market_cap], [_, volume]} ->
-            datetime = DateTime.from_unix!(div(timestamp, 1000), :second)
-
             %{
               "symbol" => coin_id,
-              "timestamp" => datetime,
+              "timestamp" => parse_milliseconds_timestamp(timestamp),
               # CoinGecko doesn't provide OHLC, so we use price for all
               "open" => price,
               "high" => price,
               "low" => price,
               "close" => price,
-              "volume" => trunc(volume),
+              "volume" => truncate_number(volume),
               "adj_close" => price,
-              "market_cap" => trunc(market_cap)
+              "market_cap" => truncate_number(market_cap)
             }
           end)
 
@@ -414,7 +413,7 @@ defmodule Quant.Explorer.Providers.CoinGecko do
               "change_percent" => Map.get(coin_data, "#{vs_currency}_24h_change"),
               "volume" => Map.get(coin_data, "#{vs_currency}_24h_vol"),
               "market_cap" => Map.get(coin_data, "#{vs_currency}_market_cap"),
-              "timestamp" => DateTime.utc_now()
+              "timestamp" => parse_unix_timestamp(Map.get(coin_data, "last_updated_at"))
             }
           end)
 
@@ -427,7 +426,7 @@ defmodule Quant.Explorer.Providers.CoinGecko do
 
   defp parse_coin_info_response(body) do
     case HttpClientConfig.decode_json(body) do
-      {:ok, coin_data} ->
+      {:ok, coin_data} when is_map(coin_data) ->
         market_data = Map.get(coin_data, "market_data", %{})
 
         info = %{
@@ -435,8 +434,8 @@ defmodule Quant.Explorer.Providers.CoinGecko do
           "symbol" => Map.get(coin_data, "symbol"),
           "name" => Map.get(coin_data, "name"),
           "description" => get_in(coin_data, ["description", "en"]),
-          "homepage" => get_in(coin_data, ["links", "homepage"]) |> List.first(),
-          "blockchain_site" => get_in(coin_data, ["links", "blockchain_site"]) |> List.first(),
+          "homepage" => first_or_nil(get_in(coin_data, ["links", "homepage"])),
+          "blockchain_site" => first_or_nil(get_in(coin_data, ["links", "blockchain_site"])),
           "market_cap_rank" => Map.get(coin_data, "market_cap_rank"),
           "current_price" => get_in(market_data, ["current_price", "usd"]),
           "market_cap" => get_in(market_data, ["market_cap", "usd"]),
@@ -454,6 +453,9 @@ defmodule Quant.Explorer.Providers.CoinGecko do
 
       {:error, reason} ->
         {:error, {:parse_error, reason}}
+
+      {:ok, unexpected} ->
+        {:error, {:parse_error, "Unexpected response format: #{inspect(unexpected)}"}}
     end
   end
 
@@ -489,10 +491,10 @@ defmodule Quant.Explorer.Providers.CoinGecko do
               "price" => Map.get(coin, "current_price", 0.0),
               "change" => Map.get(coin, "price_change_24h", 0.0),
               "change_percent" => Map.get(coin, "price_change_percentage_24h", 0.0),
-              "volume" => trunc(Map.get(coin, "total_volume", 0.0)),
-              "market_cap" => trunc(Map.get(coin, "market_cap", 0.0)),
+              "volume" => truncate_number(Map.get(coin, "total_volume", 0.0)),
+              "market_cap" => truncate_number(Map.get(coin, "market_cap", 0.0)),
               "market_cap_rank" => Map.get(coin, "market_cap_rank"),
-              "timestamp" => DateTime.utc_now()
+              "timestamp" => parse_iso_timestamp(Map.get(coin, "last_updated"))
             }
           end)
 
@@ -540,4 +542,34 @@ defmodule Quant.Explorer.Providers.CoinGecko do
 
   defp validate_days(_),
     do: {:error, {:invalid_period, "Supported days: 1, 7, 14, 30, 90, 180, 365, 'max'"}}
+
+  defp parse_unix_timestamp(timestamp) when is_integer(timestamp) do
+    case DateTime.from_unix(timestamp) do
+      {:ok, datetime} -> datetime
+      {:error, _} -> nil
+    end
+  end
+
+  defp parse_unix_timestamp(_), do: nil
+
+  defp parse_milliseconds_timestamp(timestamp) when is_integer(timestamp) do
+    parse_unix_timestamp(div(timestamp, 1_000))
+  end
+
+  defp parse_milliseconds_timestamp(_), do: nil
+
+  defp parse_iso_timestamp(timestamp) when is_binary(timestamp) do
+    case DateTime.from_iso8601(timestamp) do
+      {:ok, datetime, _offset} -> datetime
+      {:error, _} -> nil
+    end
+  end
+
+  defp parse_iso_timestamp(_), do: nil
+
+  defp first_or_nil(values) when is_list(values), do: List.first(values)
+  defp first_or_nil(_), do: nil
+
+  defp truncate_number(value) when is_number(value), do: trunc(value)
+  defp truncate_number(_), do: nil
 end

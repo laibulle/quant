@@ -123,8 +123,9 @@ defmodule Quant.Explorer.DataTransformer do
 
   def normalize_number(n) when is_binary(n) do
     case Float.parse(n) do
-      {num, _} -> num
+      {num, ""} -> num
       :error -> nil
+      _ -> nil
     end
   end
 
@@ -140,13 +141,14 @@ defmodule Quant.Explorer.DataTransformer do
 
   def normalize_volume(n) when is_binary(n) do
     case Integer.parse(n) do
-      {num, _} ->
+      {num, ""} ->
         num
 
-      :error ->
+      _ ->
         case Float.parse(n) do
-          {num, _} -> round(num)
+          {num, ""} -> round(num)
           :error -> nil
+          _ -> nil
         end
     end
   end
@@ -203,9 +205,7 @@ defmodule Quant.Explorer.DataTransformer do
       "change_percent" =>
         normalize_number(Map.get(row, :change_percent) || Map.get(row, "change_percent")),
       "volume" => normalize_volume(Map.get(row, :volume) || Map.get(row, "volume")),
-      "timestamp" =>
-        normalize_timestamp(Map.get(row, :timestamp) || Map.get(row, "timestamp")) ||
-          DateTime.utc_now()
+      "timestamp" => normalize_timestamp(Map.get(row, :timestamp) || Map.get(row, "timestamp"))
     }
   end
 
