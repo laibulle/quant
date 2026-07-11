@@ -337,20 +337,27 @@ defmodule Quant.Explorer.DataTransformer do
 
   # Simple CSV parsing function using built-in string operations
   defp parse_csv_lines(csv_data) do
-    csv_data
-    |> String.trim()
-    |> String.split("\n")
-    |> Enum.map(fn line ->
-      # Simple CSV parsing (handles basic cases)
-      line
-      |> String.split(",")
-      |> Enum.map(&String.trim/1)
-      |> Enum.map(fn cell ->
-        # Remove quotes if present
-        cell
-        |> String.trim("\"")
-        |> String.trim("'")
-      end)
+    case String.trim(csv_data) do
+      "" ->
+        []
+
+      content ->
+        content
+        |> String.split("\n")
+        |> Enum.map(&parse_csv_line/1)
+    end
+  end
+
+  defp parse_csv_line(line) do
+    # Simple CSV parsing (handles basic cases)
+    line
+    |> String.split(",")
+    |> Enum.map(&String.trim/1)
+    |> Enum.map(fn cell ->
+      # Remove quotes if present
+      cell
+      |> String.trim("\"")
+      |> String.trim("'")
     end)
   end
 end

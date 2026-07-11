@@ -33,7 +33,8 @@ Make correctness claims proportionate to automated evidence.
 ## Implemented coverage
 
 - [x] `DataTransformer` is covered for timestamp, number and volume
-  normalization, history/quote transformation, CSV conversion and cleaning.
+  normalization, list/map history and quote transformation, search results, CSV
+  conversion and schema-specific cleaning.
 - [x] `HttpClient` is covered for JSON decoding, status classification, provider
   error extraction and unsupported-method rejection without network access.
 - [x] `HttpClient` is exercised against a local TCP HTTP server for encoded GET
@@ -52,3 +53,9 @@ Make correctness claims proportionate to automated evidence.
   and strict numeric parsing.
 - [x] `YahooFinance` is covered for source quote timestamps, empty historical
   data, company information and option chains.
+- [x] The public `Quant.Explorer` API is covered for provider dispatch, `fetch`
+  compatibility, cached and uncached histories, metadata and unknown providers.
+- [x] Rate-limiting request metadata and every supported algorithm configuration
+  are covered at the behaviour boundary.
+- [x] `HttpClientConfig` is covered for default/configured client selection and
+  GET, POST and JSON delegation.

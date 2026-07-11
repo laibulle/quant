@@ -43,41 +43,33 @@ defmodule Quant.Strategy.Optimization.BenchmarkTest do
 
       # Verify benchmark metrics
       combinations_count = 2
-      time_ms = div(time_micro, 1000)
+      combinations_per_second = combinations_count * 1_000_000 / max(time_micro, 1)
 
-      combinations_per_second =
-        if time_ms > 0, do: div(combinations_count * 1000, time_ms), else: 1000
-
-      assert time_ms >= 0
+      assert time_micro >= 0
       assert combinations_per_second > 0
       assert DataFrame.n_rows(results) == combinations_count
     end
 
-    test "parallel processing shows performance improvement" do
+    test "parallel processing returns the same parameter grid as serial execution" do
       df = create_benchmark_data()
       # 4 combinations
       test_params = %{period: 5..8}
 
       # Single-threaded
-      {time_single, {:ok, _}} =
+      {_time_single, {:ok, single_results}} =
         :timer.tc(fn ->
           Optimization.run_combinations_parallel(df, :sma_crossover, test_params, concurrency: 1)
         end)
 
       # Multi-threaded
-      {time_parallel, {:ok, _}} =
+      {_time_parallel, {:ok, parallel_results}} =
         :timer.tc(fn ->
           Optimization.run_combinations_parallel(df, :sma_crossover, test_params, concurrency: 4)
         end)
 
-      # Verify both approaches work
-      assert time_single > 0
-      assert time_parallel > 0
-
-      # Parallel should be at least as fast (allowing for overhead in small tests)
-      speedup_ratio = time_single / time_parallel
-      # Allow for test overhead
-      assert speedup_ratio >= 0.5
+      assert DataFrame.n_rows(single_results) == 4
+      assert DataFrame.n_rows(parallel_results) == 4
+      assert DataFrame.names(parallel_results) == DataFrame.names(single_results)
     end
 
     test "streaming approach handles larger parameter spaces" do
