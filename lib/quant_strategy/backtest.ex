@@ -36,7 +36,10 @@ defmodule Quant.Strategy.Backtest do
           max_positions: integer(),
           stop_loss: float(),
           take_profit: float(),
-          execute_on: :next_open | :close
+          execute_on: :next_open | :close,
+          allow_short: boolean(),
+          close_final_position: boolean(),
+          intrabar_exit_policy: :stop_first | :take_profit_first
         ]
 
   @doc """
@@ -57,6 +60,11 @@ defmodule Quant.Strategy.Backtest do
   - `:max_positions` - Maximum concurrent positions (default: 1)
   - `:stop_loss` - Stop loss percentage (default: nil)
   - `:take_profit` - Take profit percentage (default: nil)
+  - `:allow_short` - Allow `-1` signals to open short positions (default: false)
+  - `:close_final_position` - Close remaining positions on each symbol's final
+    bar (default: false)
+  - `:intrabar_exit_policy` - Collision policy when a bar reaches both stop and
+    take-profit levels: `:stop_first` (default) or `:take_profit_first`
 
   ## Returns
 
@@ -95,18 +103,53 @@ defmodule Quant.Strategy.Backtest do
     max_positions = Keyword.get(opts, :max_positions, 1)
     stop_loss = Keyword.get(opts, :stop_loss)
     take_profit = Keyword.get(opts, :take_profit)
+    allow_short = Keyword.get(opts, :allow_short, false)
+    close_final_position = Keyword.get(opts, :close_final_position, false)
+    intrabar_exit_policy = Keyword.get(opts, :intrabar_exit_policy, :stop_first)
 
-    with :ok <- validate_execution_options(execute_on, max_positions, stop_loss, take_profit) do
-      execute_backtest_rows(
-        signals_df,
-        initial_capital,
-        commission,
-        slippage,
-        position_size_method,
-        execute_on,
-        stop_loss,
-        take_profit
-      )
+    execution_options = %{
+      commission: commission,
+      slippage: slippage,
+      position_size_method: position_size_method,
+      execute_on: execute_on,
+      max_positions: max_positions,
+      allow_short: allow_short,
+      close_final_position: close_final_position,
+      stop_loss: stop_loss,
+      take_profit: take_profit,
+      intrabar_exit_policy: intrabar_exit_policy
+    }
+
+    with :ok <-
+           validate_execution_options(
+             execute_on,
+             max_positions,
+             stop_loss,
+             take_profit,
+             allow_short,
+             close_final_position,
+             intrabar_exit_policy
+           ) do
+      if portfolio_engine?(
+           max_positions,
+           allow_short,
+           close_final_position,
+           stop_loss,
+           take_profit
+         ) do
+        execute_portfolio_backtest_rows(signals_df, initial_capital, execution_options)
+      else
+        execute_backtest_rows(
+          signals_df,
+          initial_capital,
+          commission,
+          slippage,
+          position_size_method,
+          execute_on,
+          stop_loss,
+          take_profit
+        )
+      end
     end
   rescue
     e -> {:error, {:backtest_execution_failed, Exception.message(e)}}
@@ -190,6 +233,351 @@ defmodule Quant.Strategy.Backtest do
       |> add_performance_metrics(final_state, initial_capital)
 
     {:ok, result_df}
+  end
+
+  defp portfolio_engine?(max_positions, allow_short, close_final_position, stop_loss, take_profit) do
+    max_positions > 1 or allow_short or close_final_position or not is_nil(stop_loss) or
+      not is_nil(take_profit)
+  end
+
+  defp execute_portfolio_backtest_rows(signals_df, initial_capital, execution_options) do
+    rows = portfolio_rows(signals_df)
+    final_row_indexes = final_row_indexes(rows)
+
+    initial_state = %{
+      capital: initial_capital,
+      positions: %{},
+      last_prices: %{},
+      pending_signals: %{},
+      trades: [],
+      trade_count: 0
+    }
+
+    {final_state, result_rows} =
+      rows
+      |> Enum.with_index()
+      |> Enum.reduce({initial_state, []}, fn {row, index}, {state, results} ->
+        symbol = row_value(row, "symbol", "__default__")
+        close_price = row_value(row, "close")
+        execution_price = execution_price(row, close_price, execution_options.execute_on)
+        raw_signal = row_value(row, "signal", 0)
+        signal = portfolio_signal(state, symbol, raw_signal, execution_options.execute_on)
+        state = put_in(state, [:last_prices, symbol], close_price)
+
+        {state, intrabar_trade_return} =
+          maybe_exit_intrabar(state, symbol, row, index, execution_options)
+
+        {state, trade_return} =
+          process_portfolio_signal(
+            state,
+            symbol,
+            signal,
+            execution_price,
+            index,
+            execution_options
+          )
+
+        {state, final_trade_return} =
+          maybe_close_final_position(
+            state,
+            symbol,
+            close_price,
+            index,
+            final_row_indexes,
+            execution_options
+          )
+
+        state = put_in(state, [:pending_signals, symbol], raw_signal)
+        position = position_quantity(state, symbol)
+        portfolio_value = calculate_portfolio_value(state)
+
+        result = %{
+          portfolio_value: portfolio_value,
+          position: position,
+          trade_return: intrabar_trade_return + trade_return + final_trade_return
+        }
+
+        {state, [result | results]}
+      end)
+
+    ordered_results = Enum.reverse(result_rows)
+
+    result_df =
+      signals_df
+      |> sorted_portfolio_dataframe(rows)
+      |> DataFrame.put(
+        "portfolio_value",
+        Series.from_list(Enum.map(ordered_results, & &1.portfolio_value))
+      )
+      |> DataFrame.put("position", Series.from_list(Enum.map(ordered_results, & &1.position)))
+      |> DataFrame.put(
+        "trade_return",
+        Series.from_list(Enum.map(ordered_results, & &1.trade_return))
+      )
+      |> add_performance_metrics(final_state, initial_capital)
+
+    {:ok, result_df}
+  end
+
+  defp portfolio_rows(dataframe) do
+    dataframe
+    |> DataFrame.to_rows()
+    |> Enum.sort_by(fn row ->
+      {timestamp_sort_key(row_value(row, "timestamp", 0)),
+       row_value(row, "symbol", "__default__")}
+    end)
+  end
+
+  defp sorted_portfolio_dataframe(_dataframe, rows), do: DataFrame.new(rows)
+
+  defp timestamp_sort_key(%DateTime{} = timestamp), do: DateTime.to_unix(timestamp, :microsecond)
+  defp timestamp_sort_key(timestamp), do: timestamp
+
+  defp final_row_indexes(rows) do
+    rows
+    |> Enum.with_index()
+    |> Enum.reduce(%{}, fn {row, index}, indexes ->
+      Map.put(indexes, row_value(row, "symbol", "__default__"), index)
+    end)
+  end
+
+  defp row_value(row, key, default \\ nil), do: Map.get(row, key, default)
+
+  defp execution_price(row, close_price, :next_open), do: row_value(row, "open", close_price)
+  defp execution_price(_row, close_price, :close), do: close_price
+
+  defp portfolio_signal(state, symbol, _raw_signal, :next_open),
+    do: Map.get(state.pending_signals, symbol, 0)
+
+  defp portfolio_signal(_state, _symbol, raw_signal, :close), do: raw_signal
+
+  defp process_portfolio_signal(state, symbol, signal, price, index, execution_options) do
+    case Map.get(state.positions, symbol) do
+      nil when signal == 1 and map_size(state.positions) < execution_options.max_positions ->
+        {open_long_position(state, symbol, price, execution_options), 0.0}
+
+      nil
+      when signal == -1 and execution_options.allow_short and
+             map_size(state.positions) < execution_options.max_positions ->
+        {open_short_position(state, symbol, price, execution_options), 0.0}
+
+      %{direction: :long} when signal == -1 ->
+        close_portfolio_position(state, symbol, price, index, execution_options)
+
+      %{direction: :short} when signal == 1 ->
+        close_portfolio_position(state, symbol, price, index, execution_options)
+
+      _ ->
+        {state, 0.0}
+    end
+  end
+
+  defp maybe_exit_intrabar(state, symbol, row, index, execution_options) do
+    case Map.get(state.positions, symbol) do
+      nil ->
+        {state, 0.0}
+
+      position ->
+        case intrabar_exit_price(position, row, execution_options) do
+          nil -> {state, 0.0}
+          price -> close_portfolio_position(state, symbol, price, index, execution_options)
+        end
+    end
+  end
+
+  defp intrabar_exit_price(_position, _row, %{stop_loss: nil, take_profit: nil}), do: nil
+
+  defp intrabar_exit_price(position, row, execution_options) do
+    high = row_value(row, "high")
+    low = row_value(row, "low")
+    {stop_price, take_profit_price} = risk_prices(position, execution_options)
+
+    stop_hit =
+      is_number(stop_price) and intrabar_stop_hit?(position.direction, high, low, stop_price)
+
+    take_profit_hit =
+      is_number(take_profit_price) and
+        intrabar_take_profit_hit?(position.direction, high, low, take_profit_price)
+
+    choose_intrabar_exit(
+      stop_hit,
+      take_profit_hit,
+      stop_price,
+      take_profit_price,
+      execution_options
+    )
+  end
+
+  defp risk_prices(%{direction: :long, entry_price: entry_price}, execution_options) do
+    {
+      if(is_number(execution_options.stop_loss),
+        do: entry_price * (1 - execution_options.stop_loss)
+      ),
+      if(is_number(execution_options.take_profit),
+        do: entry_price * (1 + execution_options.take_profit)
+      )
+    }
+  end
+
+  defp risk_prices(%{direction: :short, entry_price: entry_price}, execution_options) do
+    {
+      if(is_number(execution_options.stop_loss),
+        do: entry_price * (1 + execution_options.stop_loss)
+      ),
+      if(is_number(execution_options.take_profit),
+        do: entry_price * (1 - execution_options.take_profit)
+      )
+    }
+  end
+
+  defp intrabar_stop_hit?(:long, _high, low, stop_price), do: is_number(low) and low <= stop_price
+
+  defp intrabar_stop_hit?(:short, high, _low, stop_price),
+    do: is_number(high) and high >= stop_price
+
+  defp intrabar_take_profit_hit?(:long, high, _low, take_price),
+    do: is_number(high) and high >= take_price
+
+  defp intrabar_take_profit_hit?(:short, _high, low, take_price),
+    do: is_number(low) and low <= take_price
+
+  defp choose_intrabar_exit(false, false, _stop_price, _take_price, _execution_options), do: nil
+
+  defp choose_intrabar_exit(true, false, stop_price, _take_price, _execution_options),
+    do: stop_price
+
+  defp choose_intrabar_exit(false, true, _stop_price, take_price, _execution_options),
+    do: take_price
+
+  defp choose_intrabar_exit(true, true, stop_price, _take_price, %{
+         intrabar_exit_policy: :stop_first
+       }),
+       do: stop_price
+
+  defp choose_intrabar_exit(true, true, _stop_price, take_price, %{
+         intrabar_exit_policy: :take_profit_first
+       }),
+       do: take_price
+
+  defp maybe_close_final_position(
+         state,
+         symbol,
+         price,
+         index,
+         final_row_indexes,
+         %{close_final_position: true} = execution_options
+       )
+       when is_number(price) do
+    if Map.get(final_row_indexes, symbol) == index and Map.has_key?(state.positions, symbol) do
+      close_portfolio_position(state, symbol, price, index, execution_options)
+    else
+      {state, 0.0}
+    end
+  end
+
+  defp maybe_close_final_position(
+         state,
+         _symbol,
+         _price,
+         _index,
+         _final_indexes,
+         _execution_options
+       ),
+       do: {state, 0.0}
+
+  defp open_long_position(state, symbol, price, execution_options) do
+    position_value =
+      calculate_position_size(state.capital, execution_options.position_size_method)
+
+    entry_price = price * (1 + execution_options.slippage)
+    commission_cost = position_value * execution_options.commission
+    quantity = (position_value - commission_cost) / entry_price
+
+    position = %{direction: :long, quantity: quantity, entry_price: entry_price}
+
+    %{
+      state
+      | capital: state.capital - position_value,
+        positions: Map.put(state.positions, symbol, position)
+    }
+  end
+
+  defp open_short_position(state, symbol, price, execution_options) do
+    position_value =
+      calculate_position_size(state.capital, execution_options.position_size_method)
+
+    entry_price = price * (1 - execution_options.slippage)
+    commission_cost = position_value * execution_options.commission
+    quantity = position_value / entry_price
+
+    position = %{direction: :short, quantity: -quantity, entry_price: entry_price}
+
+    %{
+      state
+      | capital: state.capital + position_value - commission_cost,
+        positions: Map.put(state.positions, symbol, position)
+    }
+  end
+
+  defp close_portfolio_position(state, symbol, price, index, execution_options) do
+    position = Map.fetch!(state.positions, symbol)
+
+    {exit_price, proceeds, trade_return} =
+      close_position_values(
+        position,
+        price,
+        execution_options.commission,
+        execution_options.slippage
+      )
+
+    trade = %{
+      symbol: symbol,
+      direction: position.direction,
+      entry_price: position.entry_price,
+      exit_price: exit_price,
+      shares: position.quantity,
+      return: trade_return,
+      index: index
+    }
+
+    {
+      %{
+        state
+        | capital: state.capital + proceeds,
+          positions: Map.delete(state.positions, symbol),
+          trades: [trade | state.trades],
+          trade_count: state.trade_count + 1
+      },
+      trade_return
+    }
+  end
+
+  defp close_position_values(
+         %{direction: :long, quantity: quantity, entry_price: entry_price},
+         price,
+         commission,
+         slippage
+       ) do
+    exit_price = price * (1 - slippage)
+    value = quantity * exit_price
+    {exit_price, value - value * commission, (exit_price - entry_price) / entry_price}
+  end
+
+  defp close_position_values(
+         %{direction: :short, quantity: quantity, entry_price: entry_price},
+         price,
+         commission,
+         slippage
+       ) do
+    exit_price = price * (1 + slippage)
+    value = abs(quantity) * exit_price
+    {exit_price, -(value + value * commission), (entry_price - exit_price) / entry_price}
+  end
+
+  defp position_quantity(state, symbol) do
+    state.positions
+    |> Map.get(symbol, %{quantity: 0.0})
+    |> Map.fetch!(:quantity)
   end
 
   # Private helper functions
@@ -315,17 +703,25 @@ defmodule Quant.Strategy.Backtest do
       else: dataframe
   end
 
-  defp validate_execution_options(execute_on, max_positions, stop_loss, take_profit) do
+  defp validate_execution_options(
+         execute_on,
+         max_positions,
+         stop_loss,
+         take_profit,
+         allow_short,
+         close_final_position,
+         intrabar_exit_policy
+       ) do
     with :ok <- validate_execution_timing(execute_on, stop_loss, take_profit),
          :ok <- validate_max_positions(max_positions),
-         :ok <- validate_stop_loss(stop_loss) do
-      validate_take_profit(take_profit)
+         :ok <- validate_stop_loss(stop_loss),
+         :ok <- validate_take_profit(take_profit),
+         :ok <- validate_boolean_option(allow_short, :allow_short) do
+      with :ok <- validate_boolean_option(close_final_position, :close_final_position) do
+        validate_intrabar_exit_policy(intrabar_exit_policy)
+      end
     end
   end
-
-  defp validate_execution_timing(:next_open, stop_loss, take_profit)
-       when not is_nil(stop_loss) or not is_nil(take_profit),
-       do: {:error, :risk_controls_require_close_execution}
 
   defp validate_execution_timing(execute_on, _stop_loss, _take_profit)
        when execute_on in [:next_open, :close], do: :ok
@@ -333,14 +729,34 @@ defmodule Quant.Strategy.Backtest do
   defp validate_execution_timing(execute_on, _stop_loss, _take_profit),
     do: {:error, {:invalid_execute_on, execute_on}}
 
-  defp validate_max_positions(1), do: :ok
-  defp validate_max_positions(_max_positions), do: {:error, :multi_position_not_supported}
+  defp validate_max_positions(value) when is_integer(value) and value > 0, do: :ok
+  defp validate_max_positions(_max_positions), do: {:error, :invalid_max_positions}
   defp validate_stop_loss(nil), do: :ok
   defp validate_stop_loss(value) when is_number(value) and value > 0 and value < 1, do: :ok
   defp validate_stop_loss(_value), do: {:error, :invalid_stop_loss}
   defp validate_take_profit(nil), do: :ok
   defp validate_take_profit(value) when is_number(value) and value > 0, do: :ok
   defp validate_take_profit(_value), do: {:error, :invalid_take_profit}
+  defp validate_boolean_option(value, _name) when is_boolean(value), do: :ok
+  defp validate_boolean_option(_value, name), do: {:error, {:invalid_option, name}}
+
+  defp validate_intrabar_exit_policy(policy) when policy in [:stop_first, :take_profit_first],
+    do: :ok
+
+  defp validate_intrabar_exit_policy(_policy), do: {:error, :invalid_intrabar_exit_policy}
+
+  defp calculate_portfolio_value(%{
+         capital: capital,
+         positions: positions,
+         last_prices: last_prices
+       }) do
+    positions_value =
+      Enum.reduce(positions, 0.0, fn {symbol, %{quantity: quantity}}, total ->
+        total + quantity * Map.get(last_prices, symbol, 0.0)
+      end)
+
+    capital + positions_value
+  end
 
   defp calculate_portfolio_value(state, current_price) do
     cash_value = state.capital
