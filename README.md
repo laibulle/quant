@@ -12,6 +12,8 @@
 
 Fetch financial data from multiple providers through a common Explorer-first API. Quant standardizes supported historical, quote and search fields while preserving explicit provider limitations.
 
+The feature roadmap and acceptance criteria live in [docs/features](docs/features/README.md).
+
 ## ✨ **Key Features**
 
 ### 🎯 **Universal API Design**
