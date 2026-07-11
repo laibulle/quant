@@ -1,3 +1,11 @@
+---
+id: RS-001
+status: implemented
+domain: research
+owners: [Quant.Math]
+depends_on: [DF-002]
+---
+
 # RS-001 — Technical indicators
 
 **Status:** implemented

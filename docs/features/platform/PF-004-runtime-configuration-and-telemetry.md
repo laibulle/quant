@@ -1,3 +1,11 @@
+---
+id: PF-004
+status: partial
+domain: platform
+owners: [Quant.Explorer.Config]
+depends_on: []
+---
+
 # PF-004 — Runtime configuration and telemetry
 
 **Status:** partial

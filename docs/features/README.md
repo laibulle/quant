@@ -4,9 +4,9 @@ This directory is the source of truth for product scope. Each specification has
 one stable identifier, an explicit status, acceptance criteria and known
 non-goals. Implementation, tests and release notes should reference that ID.
 
-Start a new specification from [TEMPLATE.md](TEMPLATE.md). Keep the headings in
-that order; delete a section only when it is genuinely not applicable and state
-why in the remaining text.
+Start a new specification from [TEMPLATE.md](TEMPLATE.md). The YAML frontmatter
+is mandatory and machine-readable. Keep applicable template headings in order;
+for a genuinely inapplicable section, write `Not applicable — <reason>`.
 
 ## Statuses
 

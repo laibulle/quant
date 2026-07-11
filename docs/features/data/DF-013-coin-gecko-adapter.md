@@ -1,3 +1,11 @@
+---
+id: DF-013
+status: partial
+domain: data
+owners: [Quant.Explorer.Providers.CoinGecko]
+depends_on: [DF-001, DF-002, PF-001, PF-002]
+---
+
 # DF-013 — CoinGecko adapter
 
 **Status:** partial

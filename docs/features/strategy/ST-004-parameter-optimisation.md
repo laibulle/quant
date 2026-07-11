@@ -1,3 +1,11 @@
+---
+id: ST-004
+status: implemented
+domain: strategy
+owners: [Quant.Strategy.Optimization]
+depends_on: [ST-002, ST-003]
+---
+
 # ST-004 — Parameter optimisation
 
 **Status:** implemented

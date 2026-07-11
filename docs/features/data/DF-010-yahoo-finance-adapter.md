@@ -1,3 +1,11 @@
+---
+id: DF-010
+status: implemented
+domain: data
+owners: [Quant.Explorer.Providers.YahooFinance]
+depends_on: [DF-001, DF-002, PF-001, PF-002]
+---
+
 # DF-010 — Yahoo Finance adapter
 
 **Status:** implemented

@@ -1,3 +1,11 @@
+---
+id: ST-001
+status: implemented
+domain: strategy
+owners: [Quant.Strategy]
+depends_on: [RS-001, DF-002]
+---
+
 # ST-001 — Strategy and signal framework
 
 **Status:** implemented

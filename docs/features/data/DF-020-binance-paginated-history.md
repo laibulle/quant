@@ -1,3 +1,11 @@
+---
+id: DF-020
+status: planned
+domain: data
+owners: [Quant.Explorer.Providers.Binance]
+depends_on: [DF-012, PF-002, QL-002]
+---
+
 # DF-020 — Binance paginated history
 
 **Status:** planned  

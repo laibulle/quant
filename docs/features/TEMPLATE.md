@@ -1,9 +1,12 @@
-# <ID> — <Feature name>
+---
+id: <DOMAIN>-<NNN>
+status: planned # planned | partial | implemented | decision-required
+domain: <data | platform | research | strategy | quality | product>
+owners: [<module-or-team>]
+depends_on: []
+---
 
-**Status:** planned | partial | implemented | decision-required  
-**Domain:** <data | platform | research | strategy | quality | product>  
-**Owner modules:** `<Module.One>`, `<Module.Two>`  
-**Depends on:** <feature IDs, or `none`>
+# <ID> — <Feature name>
 
 ## Goal
 

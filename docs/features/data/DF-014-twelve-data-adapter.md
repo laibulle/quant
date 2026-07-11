@@ -1,3 +1,11 @@
+---
+id: DF-014
+status: partial
+domain: data
+owners: [Quant.Explorer.Providers.TwelveData]
+depends_on: [DF-001, DF-002, PF-001, PF-002]
+---
+
 # DF-014 — Twelve Data adapter
 
 **Status:** partial

@@ -1,3 +1,11 @@
+---
+id: DF-001
+status: partial
+domain: data
+owners: [Quant.Explorer]
+depends_on: [DF-002, PF-002, PF-003]
+---
+
 # DF-001 — Unified market-data API
 
 **Status:** partial  

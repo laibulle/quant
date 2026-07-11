@@ -1,3 +1,11 @@
+---
+id: PF-002
+status: implemented
+domain: platform
+owners: [Quant.Explorer.RateLimiter]
+depends_on: []
+---
+
 # PF-002 — Provider-aware rate limiting
 
 **Status:** implemented

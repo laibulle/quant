@@ -1,3 +1,11 @@
+---
+id: DF-002
+status: partial
+domain: data
+owners: [Quant.Explorer.SchemaStandardizer]
+depends_on: []
+---
+
 # DF-002 — Data contract and integrity
 
 **Status:** partial  

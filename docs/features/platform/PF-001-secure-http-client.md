@@ -1,3 +1,11 @@
+---
+id: PF-001
+status: implemented
+domain: platform
+owners: [Quant.Explorer.HttpClient]
+depends_on: []
+---
+
 # PF-001 — Secure HTTP client
 
 **Status:** implemented

@@ -1,3 +1,11 @@
+---
+id: ST-003
+status: implemented
+domain: strategy
+owners: [Quant.Strategy.Performance]
+depends_on: [ST-002]
+---
+
 # ST-003 — Performance analysis
 
 **Status:** implemented

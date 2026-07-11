@@ -1,3 +1,11 @@
+---
+id: QL-002
+status: partial
+domain: quality
+owners: [test.integration]
+depends_on: [QL-001, DF-010, DF-011, DF-012, DF-013, DF-014]
+---
+
 # QL-002 — Provider integration contracts
 
 **Status:** partial

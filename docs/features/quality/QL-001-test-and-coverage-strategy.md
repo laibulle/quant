@@ -1,3 +1,11 @@
+---
+id: QL-001
+status: partial
+domain: quality
+owners: [test]
+depends_on: []
+---
+
 # QL-001 — Test and coverage strategy
 
 **Status:** partial

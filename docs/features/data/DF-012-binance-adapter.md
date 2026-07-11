@@ -1,3 +1,11 @@
+---
+id: DF-012
+status: partial
+domain: data
+owners: [Quant.Explorer.Providers.Binance]
+depends_on: [DF-001, DF-002, PF-001, PF-002]
+---
+
 # DF-012 — Binance adapter
 
 **Status:** partial

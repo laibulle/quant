@@ -1,3 +1,11 @@
+---
+id: DF-011
+status: partial
+domain: data
+owners: [Quant.Explorer.Providers.AlphaVantage]
+depends_on: [DF-001, DF-002, PF-001, PF-002]
+---
+
 # DF-011 — Alpha Vantage adapter
 
 **Status:** partial

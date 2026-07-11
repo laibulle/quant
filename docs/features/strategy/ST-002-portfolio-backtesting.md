@@ -1,3 +1,11 @@
+---
+id: ST-002
+status: partial
+domain: strategy
+owners: [Quant.Strategy.Backtest]
+depends_on: [ST-001, DF-002, ST-003]
+---
+
 # ST-002 — Portfolio backtesting
 
 **Status:** partial

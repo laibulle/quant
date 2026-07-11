@@ -1,3 +1,11 @@
+---
+id: PD-002
+status: partial
+domain: product
+owners: [maintainers]
+depends_on: [QL-001, PD-001]
+---
+
 # PD-002 — Release and versioning policy
 
 **Status:** partial

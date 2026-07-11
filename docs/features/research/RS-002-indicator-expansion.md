@@ -1,3 +1,11 @@
+---
+id: RS-002
+status: planned
+domain: research
+owners: [Quant.Math]
+depends_on: [RS-001, DF-002]
+---
+
 # RS-002 — Indicator expansion
 
 **Status:** planned

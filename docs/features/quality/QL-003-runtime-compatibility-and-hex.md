@@ -1,3 +1,11 @@
+---
+id: QL-003
+status: decision-required
+domain: quality
+owners: [mix]
+depends_on: [QL-001, PD-001, PD-002]
+---
+
 # QL-003 — Runtime compatibility and Hex readiness
 
 **Status:** decision-required

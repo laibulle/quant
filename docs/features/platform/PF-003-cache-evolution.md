@@ -1,3 +1,11 @@
+---
+id: PF-003
+status: partial
+domain: platform
+owners: [Quant.Explorer.Cache]
+depends_on: [DF-001, PF-004]
+---
+
 # PF-003 — Cache evolution
 
 **Status:** partial  
