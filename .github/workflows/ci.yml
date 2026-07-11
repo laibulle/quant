@@ -25,7 +25,7 @@ jobs:
           elixir-version: "> 0"
 
       - name: Restore Mix dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             deps
