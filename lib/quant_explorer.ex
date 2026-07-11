@@ -170,6 +170,25 @@ defmodule Quant.Explorer do
   def fetch(symbols, opts \\ []), do: history(symbols, opts)
 
   @doc """
+  Returns statistics for the local historical-data cache.
+  """
+  @spec cache_stats() :: map()
+  def cache_stats, do: Cache.stats()
+
+  @doc """
+  Clears all local cached historical responses.
+  """
+  @spec clear_cache() :: :ok
+  def clear_cache, do: Cache.clear()
+
+  @doc """
+  Invalidates cached historical responses by `:provider`, `:symbol` and/or
+  standardized `:interval`.
+  """
+  @spec invalidate_cache(keyword()) :: {:ok, non_neg_integer()} | {:error, term()}
+  def invalidate_cache(filters \\ []), do: Cache.invalidate(filters)
+
+  @doc """
   Lists supported standard intervals.
   """
   @spec supported_intervals() :: [String.t()]
@@ -316,29 +335,16 @@ defmodule Quant.Explorer do
 
   defp cached_or_fetch(cache_key, true, fetcher) do
     started_at = System.monotonic_time(:microsecond)
-
-    result_and_cache_status =
-      case Cache.get(cache_key) do
-        {:ok, value} -> {value, true}
-        :miss -> cache_fetched_history(cache_key, fetcher)
-      end
-
-    {result, cached} = result_and_cache_status
-    observe_history(result, cached, started_at)
+    {cache_status, result} = Cache.fetch(cache_key, fetcher)
+    observe_history(result, cache_status, started_at)
   end
 
-  defp cache_fetched_history(cache_key, fetcher) do
-    result = fetcher.()
-    if match?({:ok, _}, result), do: Cache.put(cache_key, result)
-    {result, false}
-  end
-
-  defp observe_history(result, cached, started_at) do
+  defp observe_history(result, cache_status, started_at) do
     if Config.telemetry_enabled?() do
       :telemetry.execute(
         [:quant, :explorer, :history],
         %{duration: System.monotonic_time(:microsecond) - started_at},
-        %{cached: cached, result: result_status(result)}
+        %{cache_status: cache_status, result: result_status(result)}
       )
     end
 
