@@ -63,4 +63,30 @@ defmodule Quant.Explorer.CacheTest do
     assert Agent.get(counter, & &1) == 1
     assert %{coalesced: 1, writes: 1} = Cache.stats()
   end
+
+  test "invalidates explicit history ranges that overlap the requested range" do
+    january =
+      {:history, :binance, "BTCUSDT",
+       [interval: "1d", start_date: ~D[2026-01-01], end_date: ~D[2026-01-31]]}
+
+    march =
+      {:history, :binance, "BTCUSDT",
+       [interval: "1d", start_date: ~D[2026-03-01], end_date: ~D[2026-03-31]]}
+
+    assert :ok = Cache.put(january, {:ok, :january})
+    assert :ok = Cache.put(march, {:ok, :march})
+
+    assert {:ok, 1} =
+             Cache.invalidate(start_date: ~D[2026-01-15], end_date: ~D[2026-02-15])
+
+    assert :miss = Cache.get(january)
+    assert {:ok, {:ok, :march}} = Cache.get(march)
+  end
+
+  test "rejects invalid cache date filters" do
+    assert {:error, :invalid_cache_filter} = Cache.invalidate(start_date: "2026-01-01")
+
+    assert {:error, :invalid_cache_filter} =
+             Cache.invalidate(start_date: ~D[2026-02-01], end_date: ~D[2026-01-01])
+  end
 end

@@ -21,6 +21,8 @@ or cross-provider contamination.
 
 - [x] Targeted invalidation by provider, symbol and interval via
   `Quant.Explorer.invalidate_cache/1`.
+- [x] Invalidation by overlapping explicit `start_date`/`end_date` ranges and
+  explicit expiry purge via `Quant.Explorer.purge_expired_cache/0`.
 - [x] Hit/miss/eviction statistics and cache telemetry metadata.
 - [x] Single-flight request coalescing on cache miss.
 

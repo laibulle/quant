@@ -56,6 +56,12 @@ defmodule Quant.Explorer.Cache do
   def invalidate(filters \\ []) when is_list(filters),
     do: GenServer.call(__MODULE__, {:invalidate, filters})
 
+  @doc """
+  Removes expired entries and returns how many were purged.
+  """
+  @spec purge_expired() :: non_neg_integer()
+  def purge_expired, do: GenServer.call(__MODULE__, :purge_expired)
+
   @impl true
   def init(opts) do
     table =
@@ -156,6 +162,21 @@ defmodule Quant.Explorer.Cache do
   end
 
   @impl true
+  def handle_call(:purge_expired, _from, state) do
+    now = System.monotonic_time(:millisecond)
+
+    keys =
+      state.table
+      |> :ets.tab2list()
+      |> Enum.filter(fn {_key, expires_at, _value} -> expires_at <= now end)
+      |> Enum.map(&elem(&1, 0))
+
+    Enum.each(keys, &:ets.delete(state.table, &1))
+    state = update_in(state, [:stats, :expirations], &(&1 + length(keys)))
+    {:reply, length(keys), state}
+  end
+
+  @impl true
   def handle_cast({:complete_fetch, key, result}, state) do
     {waiters, inflight} = Map.pop(state.inflight, key, [])
     state = %{state | inflight: inflight}
@@ -223,9 +244,11 @@ defmodule Quant.Explorer.Cache do
   end
 
   defp validate_filters(filters) do
-    valid_keys = [:provider, :symbol, :interval]
+    valid_keys = [:provider, :symbol, :interval, :start_date, :end_date]
 
-    if Keyword.keyword?(filters) and Enum.all?(Keyword.keys(filters), &(&1 in valid_keys)) do
+    if Keyword.keyword?(filters) and Enum.all?(Keyword.keys(filters), &(&1 in valid_keys)) and
+         valid_date_filter?(filters[:start_date]) and valid_date_filter?(filters[:end_date]) and
+         valid_date_range?(filters[:start_date], filters[:end_date]) do
       :ok
     else
       {:error, :invalid_cache_filter}
@@ -246,7 +269,8 @@ defmodule Quant.Explorer.Cache do
   defp history_key_matches?({:history, provider, symbols, params}, filters) do
     provider_matches?(provider, filters[:provider]) and
       symbol_matches?(symbols, filters[:symbol]) and
-      interval_matches?(params, filters[:interval])
+      interval_matches?(params, filters[:interval]) and
+      date_range_matches?(params, filters[:start_date], filters[:end_date])
   end
 
   defp history_key_matches?(_key, _filters), do: false
@@ -257,6 +281,40 @@ defmodule Quant.Explorer.Cache do
   defp symbol_matches?(symbols, requested), do: requested in List.wrap(symbols)
   defp interval_matches?(_params, nil), do: true
   defp interval_matches?(params, requested), do: Keyword.get(params, :interval) == requested
+
+  defp valid_date_filter?(nil), do: true
+  defp valid_date_filter?(%Date{}), do: true
+  defp valid_date_filter?(%DateTime{}), do: true
+  defp valid_date_filter?(_value), do: false
+
+  defp valid_date_range?(nil, _end_date), do: true
+  defp valid_date_range?(_start_date, nil), do: true
+
+  defp valid_date_range?(start_date, end_date) do
+    Date.compare(as_date(start_date), as_date(end_date)) != :gt
+  end
+
+  defp date_range_matches?(_params, nil, nil), do: true
+
+  defp date_range_matches?(params, requested_start, requested_end) do
+    case {Keyword.get(params, :start_date), Keyword.get(params, :end_date)} do
+      {%Date{} = cached_start, %Date{} = cached_end} ->
+        overlaps?(cached_start, cached_end, requested_start, requested_end)
+
+      _ ->
+        false
+    end
+  end
+
+  defp overlaps?(cached_start, cached_end, requested_start, requested_end) do
+    start_date = if requested_start, do: as_date(requested_start), else: cached_start
+    end_date = if requested_end, do: as_date(requested_end), else: cached_end
+
+    Date.compare(cached_end, start_date) != :lt and Date.compare(cached_start, end_date) != :gt
+  end
+
+  defp as_date(%Date{} = date), do: date
+  defp as_date(%DateTime{} = datetime), do: DateTime.to_date(datetime)
 
   defp evict_if_needed(state, key) do
     key_exists? = :ets.member(state.table, key)

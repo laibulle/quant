@@ -182,11 +182,17 @@ defmodule Quant.Explorer do
   def clear_cache, do: Cache.clear()
 
   @doc """
-  Invalidates cached historical responses by `:provider`, `:symbol` and/or
-  standardized `:interval`.
+  Invalidates cached historical responses by `:provider`, `:symbol`,
+  standardized `:interval` and/or an overlapping `:start_date`/`:end_date`.
   """
   @spec invalidate_cache(keyword()) :: {:ok, non_neg_integer()} | {:error, term()}
   def invalidate_cache(filters \\ []), do: Cache.invalidate(filters)
+
+  @doc """
+  Removes expired local cache entries and returns the number purged.
+  """
+  @spec purge_expired_cache() :: non_neg_integer()
+  def purge_expired_cache, do: Cache.purge_expired()
 
   @doc """
   Lists supported standard intervals.
