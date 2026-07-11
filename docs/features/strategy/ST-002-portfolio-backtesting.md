@@ -21,6 +21,23 @@ depends_on: [ST-001, DF-002, ST-003]
 - Commission and slippage are applied to long and short fills.
 - Intrabar stop-loss/take-profit exits use OHLC, with an explicit collision
   policy (`:stop_first` by default or `:take_profit_first`).
+- Every market or conditional fill is exposed on the result row
+  (`order_status`, `order_type`, `order_side`, `order_trigger_price`,
+  `fill_price`, `fee`, `slippage_cost`, `order_reason`).
+- Entry signals accept `:market`, `{:limit, price}` or `{:stop, price}`. Limit
+  and stop entries remain pending until a later bar reaches their OHLC trigger.
+- An opposing signal cancels an unfilled entry order deterministically.
+- Signal exits accept `:market`, `{:limit, price}` or `{:stop, price}` and use
+  the same deterministic pending-order lifecycle as entries.
+- Conditional orders can be partially filled with
+  `max_volume_participation: ratio`; every fill is capped at `ratio` of the
+  current bar's reported volume. The option is deliberately inactive when no
+  volume is available.
+- Open shorts can incur a deterministic `short_borrow_rate_per_bar`; the cost
+  is visible in `borrow_cost` and deducted before the current bar's signals.
+- Maintenance margin is measured as portfolio equity divided by gross short
+  exposure. A breach of `short_maintenance_margin` closes the affected short
+  at the bar close with the `margin_liquidation` order reason.
 
 ## Explicit current constraints
 
@@ -28,8 +45,8 @@ depends_on: [ST-001, DF-002, ST-003]
   sequentially against the available shared cash balance.
 - Signals close an opposing position; they do not silently flip from long to
   short (or the reverse) in the same bar.
-- Borrow costs, margin calls and limit/stop order lifecycles are not implemented
-  yet.
+- Initial-margin requirements, broker-specific collateral segregation and
+  bankruptcy handling are not modelled yet.
 
 ## Target scope
 

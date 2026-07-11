@@ -26,6 +26,7 @@ defmodule Quant.Strategy.Backtest do
   alias Explorer.DataFrame
   alias Explorer.Series
   alias Quant.Strategy
+  alias Quant.Strategy.Order
   require Explorer.DataFrame
 
   @type backtest_options :: [
@@ -39,7 +40,12 @@ defmodule Quant.Strategy.Backtest do
           execute_on: :next_open | :close,
           allow_short: boolean(),
           close_final_position: boolean(),
-          intrabar_exit_policy: :stop_first | :take_profit_first
+          intrabar_exit_policy: :stop_first | :take_profit_first,
+          entry_order: :market | {:limit | :stop, number()},
+          exit_order: :market | {:limit | :stop, number()},
+          max_volume_participation: float() | nil,
+          short_borrow_rate_per_bar: float(),
+          short_maintenance_margin: float()
         ]
 
   @doc """
@@ -65,6 +71,17 @@ defmodule Quant.Strategy.Backtest do
     bar (default: false)
   - `:intrabar_exit_policy` - Collision policy when a bar reaches both stop and
     take-profit levels: `:stop_first` (default) or `:take_profit_first`
+  - `:entry_order` - Market order (default), `{:limit, price}` or
+    `{:stop, price}` for pending entries
+  - `:exit_order` - Market order (default), `{:limit, price}` or
+    `{:stop, price}` for pending signal exits
+  - `:max_volume_participation` - Optional fraction of a bar's reported volume
+    available to each conditional-order fill (strictly greater than 0 and at
+    most 1)
+  - `:short_borrow_rate_per_bar` - Borrow rate charged on each bar where a
+    short remains open (default: `0.0`)
+  - `:short_maintenance_margin` - Minimum portfolio equity divided by gross
+    short exposure before forced close-out (default: `0.25`)
 
   ## Returns
 
@@ -106,6 +123,11 @@ defmodule Quant.Strategy.Backtest do
     allow_short = Keyword.get(opts, :allow_short, false)
     close_final_position = Keyword.get(opts, :close_final_position, false)
     intrabar_exit_policy = Keyword.get(opts, :intrabar_exit_policy, :stop_first)
+    entry_order = Keyword.get(opts, :entry_order, :market)
+    exit_order = Keyword.get(opts, :exit_order, :market)
+    max_volume_participation = Keyword.get(opts, :max_volume_participation)
+    short_borrow_rate_per_bar = Keyword.get(opts, :short_borrow_rate_per_bar, 0.0)
+    short_maintenance_margin = Keyword.get(opts, :short_maintenance_margin, 0.25)
 
     execution_options = %{
       commission: commission,
@@ -117,25 +139,24 @@ defmodule Quant.Strategy.Backtest do
       close_final_position: close_final_position,
       stop_loss: stop_loss,
       take_profit: take_profit,
-      intrabar_exit_policy: intrabar_exit_policy
+      intrabar_exit_policy: intrabar_exit_policy,
+      entry_order: entry_order,
+      exit_order: exit_order,
+      max_volume_participation: max_volume_participation,
+      short_borrow_rate_per_bar: short_borrow_rate_per_bar,
+      short_maintenance_margin: short_maintenance_margin
     }
 
-    with :ok <-
-           validate_execution_options(
-             execute_on,
-             max_positions,
-             stop_loss,
-             take_profit,
-             allow_short,
-             close_final_position,
-             intrabar_exit_policy
-           ) do
+    with :ok <- validate_execution_options(execution_options) do
       if portfolio_engine?(
            max_positions,
            allow_short,
            close_final_position,
            stop_loss,
-           take_profit
+           take_profit,
+           entry_order,
+           exit_order,
+           max_volume_participation
          ) do
         execute_portfolio_backtest_rows(signals_df, initial_capital, execution_options)
       else
@@ -235,9 +256,19 @@ defmodule Quant.Strategy.Backtest do
     {:ok, result_df}
   end
 
-  defp portfolio_engine?(max_positions, allow_short, close_final_position, stop_loss, take_profit) do
+  defp portfolio_engine?(
+         max_positions,
+         allow_short,
+         close_final_position,
+         stop_loss,
+         take_profit,
+         entry_order,
+         exit_order,
+         max_volume_participation
+       ) do
     max_positions > 1 or allow_short or close_final_position or not is_nil(stop_loss) or
-      not is_nil(take_profit)
+      not is_nil(take_profit) or entry_order != :market or exit_order != :market or
+      not is_nil(max_volume_participation)
   end
 
   defp execute_portfolio_backtest_rows(signals_df, initial_capital, execution_options) do
@@ -249,6 +280,10 @@ defmodule Quant.Strategy.Backtest do
       positions: %{},
       last_prices: %{},
       pending_signals: %{},
+      pending_orders: %{},
+      last_order: nil,
+      pending_fill_return: 0.0,
+      last_borrow_cost: 0.0,
       trades: [],
       trade_count: 0
     }
@@ -262,20 +297,46 @@ defmodule Quant.Strategy.Backtest do
         execution_price = execution_price(row, close_price, execution_options.execute_on)
         raw_signal = row_value(row, "signal", 0)
         signal = portfolio_signal(state, symbol, raw_signal, execution_options.execute_on)
-        state = put_in(state, [:last_prices, symbol], close_price)
+
+        state = %{
+          put_in(state, [:last_prices, symbol], close_price)
+          | last_order: nil,
+            pending_fill_return: 0.0,
+            last_borrow_cost: 0.0
+        }
+
+        state = apply_short_borrow_cost(state, symbol, close_price, execution_options)
+
+        {state, margin_trade_return, margin_liquidated?} =
+          maybe_liquidate_short_position(
+            state,
+            symbol,
+            close_price,
+            index,
+            execution_options
+          )
+
+        state =
+          state
+          |> maybe_cancel_pending_entry(symbol, raw_signal)
+          |> maybe_fill_pending_order(symbol, row, index, execution_options)
 
         {state, intrabar_trade_return} =
           maybe_exit_intrabar(state, symbol, row, index, execution_options)
 
         {state, trade_return} =
-          process_portfolio_signal(
-            state,
-            symbol,
-            signal,
-            execution_price,
-            index,
-            execution_options
-          )
+          if margin_liquidated? do
+            {state, 0.0}
+          else
+            process_portfolio_signal(
+              state,
+              symbol,
+              signal,
+              execution_price,
+              index,
+              execution_options
+            )
+          end
 
         {state, final_trade_return} =
           maybe_close_final_position(
@@ -294,7 +355,12 @@ defmodule Quant.Strategy.Backtest do
         result = %{
           portfolio_value: portfolio_value,
           position: position,
-          trade_return: intrabar_trade_return + trade_return + final_trade_return
+          trade_return:
+            state.pending_fill_return + margin_trade_return + intrabar_trade_return + trade_return +
+              final_trade_return,
+          order: state.last_order,
+          borrow_cost: state.last_borrow_cost,
+          short_margin_ratio: short_margin_ratio(state)
         }
 
         {state, [result | results]}
@@ -314,6 +380,15 @@ defmodule Quant.Strategy.Backtest do
         "trade_return",
         Series.from_list(Enum.map(ordered_results, & &1.trade_return))
       )
+      |> DataFrame.put(
+        "borrow_cost",
+        Series.from_list(Enum.map(ordered_results, & &1.borrow_cost))
+      )
+      |> DataFrame.put(
+        "short_margin_ratio",
+        Series.from_list(Enum.map(ordered_results, & &1.short_margin_ratio))
+      )
+      |> add_order_audit_columns(ordered_results)
       |> add_performance_metrics(final_state, initial_capital)
 
     {:ok, result_df}
@@ -354,21 +429,96 @@ defmodule Quant.Strategy.Backtest do
   defp process_portfolio_signal(state, symbol, signal, price, index, execution_options) do
     case Map.get(state.positions, symbol) do
       nil when signal == 1 and map_size(state.positions) < execution_options.max_positions ->
-        {open_long_position(state, symbol, price, execution_options), 0.0}
+        {open_or_queue_position(state, symbol, :long, price, execution_options), 0.0}
 
       nil
       when signal == -1 and execution_options.allow_short and
              map_size(state.positions) < execution_options.max_positions ->
-        {open_short_position(state, symbol, price, execution_options), 0.0}
+        {open_or_queue_position(state, symbol, :short, price, execution_options), 0.0}
 
       %{direction: :long} when signal == -1 ->
-        close_portfolio_position(state, symbol, price, index, execution_options)
+        close_or_queue_position(state, symbol, :sell, price, index, execution_options)
 
       %{direction: :short} when signal == 1 ->
-        close_portfolio_position(state, symbol, price, index, execution_options)
+        close_or_queue_position(state, symbol, :buy, price, index, execution_options)
 
       _ ->
         {state, 0.0}
+    end
+  end
+
+  defp apply_short_borrow_cost(
+         state,
+         symbol,
+         price,
+         %{short_borrow_rate_per_bar: rate}
+       )
+       when is_number(price) and rate > 0 do
+    case Map.get(state.positions, symbol) do
+      %{direction: :short, quantity: quantity} ->
+        borrow_cost = abs(quantity) * price * rate
+        %{state | capital: state.capital - borrow_cost, last_borrow_cost: borrow_cost}
+
+      _ ->
+        state
+    end
+  end
+
+  defp apply_short_borrow_cost(state, _symbol, _price, _execution_options), do: state
+
+  defp maybe_liquidate_short_position(state, symbol, price, index, execution_options)
+       when is_number(price) do
+    case Map.get(state.positions, symbol) do
+      %{direction: :short} ->
+        liquidate_short_if_needed(state, symbol, price, index, execution_options)
+
+      _ ->
+        {state, 0.0, false}
+    end
+  end
+
+  defp maybe_liquidate_short_position(state, _symbol, _price, _index, _execution_options),
+    do: {state, 0.0, false}
+
+  defp liquidate_short_if_needed(state, symbol, price, index, execution_options) do
+    if short_margin_breached?(state, execution_options) do
+      {state, trade_return} =
+        close_portfolio_position(
+          state,
+          symbol,
+          price,
+          index,
+          execution_options,
+          :margin_liquidation
+        )
+
+      {state, trade_return, true}
+    else
+      {state, 0.0, false}
+    end
+  end
+
+  defp short_margin_breached?(state, %{short_maintenance_margin: maintenance_margin}) do
+    case short_margin_ratio(state) do
+      ratio when is_number(ratio) -> ratio < maintenance_margin
+      nil -> false
+    end
+  end
+
+  defp short_margin_ratio(state) do
+    gross_short_exposure =
+      Enum.reduce(state.positions, 0.0, fn {symbol, %{quantity: quantity}}, exposure ->
+        if quantity < 0 do
+          exposure + abs(quantity) * Map.get(state.last_prices, symbol, 0.0)
+        else
+          exposure
+        end
+      end)
+
+    if gross_short_exposure > 0 do
+      calculate_portfolio_value(state) / gross_short_exposure
+    else
+      nil
     end
   end
 
@@ -379,8 +529,11 @@ defmodule Quant.Strategy.Backtest do
 
       position ->
         case intrabar_exit_price(position, row, execution_options) do
-          nil -> {state, 0.0}
-          price -> close_portfolio_position(state, symbol, price, index, execution_options)
+          nil ->
+            {state, 0.0}
+
+          {price, reason} ->
+            close_portfolio_position(state, symbol, price, index, execution_options, reason)
         end
     end
   end
@@ -444,20 +597,20 @@ defmodule Quant.Strategy.Backtest do
   defp choose_intrabar_exit(false, false, _stop_price, _take_price, _execution_options), do: nil
 
   defp choose_intrabar_exit(true, false, stop_price, _take_price, _execution_options),
-    do: stop_price
+    do: {stop_price, :stop_loss}
 
   defp choose_intrabar_exit(false, true, _stop_price, take_price, _execution_options),
-    do: take_price
+    do: {take_price, :take_profit}
 
   defp choose_intrabar_exit(true, true, stop_price, _take_price, %{
          intrabar_exit_policy: :stop_first
        }),
-       do: stop_price
+       do: {stop_price, :stop_loss}
 
   defp choose_intrabar_exit(true, true, _stop_price, take_price, %{
          intrabar_exit_policy: :take_profit_first
        }),
-       do: take_price
+       do: {take_price, :take_profit}
 
   defp maybe_close_final_position(
          state,
@@ -469,7 +622,7 @@ defmodule Quant.Strategy.Backtest do
        )
        when is_number(price) do
     if Map.get(final_row_indexes, symbol) == index and Map.has_key?(state.positions, symbol) do
-      close_portfolio_position(state, symbol, price, index, execution_options)
+      close_portfolio_position(state, symbol, price, index, execution_options, :final_close)
     else
       {state, 0.0}
     end
@@ -485,6 +638,261 @@ defmodule Quant.Strategy.Backtest do
        ),
        do: {state, 0.0}
 
+  defp open_or_queue_position(
+         state,
+         symbol,
+         direction,
+         price,
+         %{entry_order: :market} = execution_options
+       ) do
+    case direction do
+      :long -> open_long_position(state, symbol, price, execution_options)
+      :short -> open_short_position(state, symbol, price, execution_options)
+    end
+  end
+
+  defp open_or_queue_position(state, symbol, direction, _price, execution_options) do
+    {order_type, trigger_price} = execution_options.entry_order
+    side = if direction == :long, do: :buy, else: :sell
+
+    position_value =
+      calculate_position_size(state.capital, execution_options.position_size_method)
+
+    quantity = position_value / trigger_price
+
+    {:ok, order} =
+      Order.new(symbol, side, order_type, quantity,
+        trigger_price: trigger_price,
+        reason: :signal_entry,
+        intent: :entry
+      )
+
+    %{state | pending_orders: Map.put(state.pending_orders, symbol, order), last_order: order}
+  end
+
+  defp close_or_queue_position(
+         state,
+         symbol,
+         _side,
+         price,
+         index,
+         %{exit_order: :market} = execution_options
+       ) do
+    close_portfolio_position(state, symbol, price, index, execution_options, :signal_exit)
+  end
+
+  defp close_or_queue_position(state, symbol, side, _price, _index, execution_options) do
+    if Map.has_key?(state.pending_orders, symbol) do
+      {state, 0.0}
+    else
+      {order_type, trigger_price} = execution_options.exit_order
+      position = Map.fetch!(state.positions, symbol)
+
+      {:ok, order} =
+        Order.new(symbol, side, order_type, abs(position.quantity),
+          trigger_price: trigger_price,
+          reason: :signal_exit,
+          intent: :exit
+        )
+
+      {%{state | pending_orders: Map.put(state.pending_orders, symbol, order), last_order: order},
+       0.0}
+    end
+  end
+
+  defp maybe_fill_pending_order(state, symbol, row, index, execution_options) do
+    fill_pending_order(
+      Map.get(state.pending_orders, symbol),
+      state,
+      symbol,
+      row,
+      index,
+      execution_options
+    )
+  end
+
+  defp fill_pending_order(nil, state, _symbol, _row, _index, _execution_options), do: state
+
+  defp fill_pending_order(order, state, symbol, row, index, execution_options) do
+    fill_quantity = conditional_fill_quantity(order, row, execution_options)
+
+    if Order.fillable?(order, order_bar(row)) and fill_quantity > 0 do
+      {:ok, filled_order} =
+        Order.fill(order, order.trigger_price,
+          quantity: fill_quantity,
+          commission: execution_options.commission,
+          slippage: execution_options.slippage
+        )
+
+      apply_filled_pending_order(state, symbol, filled_order, index)
+    else
+      state
+    end
+  end
+
+  defp conditional_fill_quantity(order, _row, %{max_volume_participation: nil}),
+    do: order.remaining_quantity
+
+  defp conditional_fill_quantity(order, row, %{max_volume_participation: participation}) do
+    case row_value(row, "volume") do
+      volume when is_number(volume) and volume > 0 ->
+        min(order.remaining_quantity, volume * participation)
+
+      _ ->
+        0.0
+    end
+  end
+
+  defp apply_filled_pending_order(state, symbol, %{intent: :entry} = order, _index),
+    do: open_filled_pending_position(state, symbol, order)
+
+  defp apply_filled_pending_order(state, symbol, %{intent: :exit} = order, index),
+    do: close_filled_pending_position(state, symbol, order, index)
+
+  defp maybe_cancel_pending_entry(state, symbol, signal) do
+    case Map.get(state.pending_orders, symbol) do
+      %{side: :buy} = order when signal == -1 ->
+        {:ok, cancelled_order} = Order.cancel(order)
+
+        %{
+          state
+          | pending_orders: Map.delete(state.pending_orders, symbol),
+            last_order: cancelled_order
+        }
+
+      %{side: :sell} = order when signal == 1 ->
+        {:ok, cancelled_order} = Order.cancel(order)
+
+        %{
+          state
+          | pending_orders: Map.delete(state.pending_orders, symbol),
+            last_order: cancelled_order
+        }
+
+      _ ->
+        state
+    end
+  end
+
+  defp order_bar(row) do
+    %{
+      high: row_value(row, "high"),
+      low: row_value(row, "low"),
+      close: row_value(row, "close"),
+      volume: row_value(row, "volume")
+    }
+  end
+
+  defp open_filled_pending_position(state, symbol, %{side: :buy} = order) do
+    position = add_to_position(state.positions[symbol], :long, order)
+
+    %{
+      state
+      | capital:
+          state.capital - order.last_fill_quantity * order.fill_price - order.last_fill_fee,
+        positions: Map.put(state.positions, symbol, position),
+        pending_orders: update_pending_order(state.pending_orders, symbol, order),
+        last_order: order
+    }
+  end
+
+  defp open_filled_pending_position(state, symbol, %{side: :sell} = order) do
+    position = add_to_position(state.positions[symbol], :short, order)
+
+    %{
+      state
+      | capital:
+          state.capital + order.last_fill_quantity * order.fill_price - order.last_fill_fee,
+        positions: Map.put(state.positions, symbol, position),
+        pending_orders: update_pending_order(state.pending_orders, symbol, order),
+        last_order: order
+    }
+  end
+
+  defp add_to_position(nil, :long, order) do
+    %{direction: :long, quantity: order.last_fill_quantity, entry_price: order.fill_price}
+  end
+
+  defp add_to_position(nil, :short, order) do
+    %{direction: :short, quantity: -order.last_fill_quantity, entry_price: order.fill_price}
+  end
+
+  defp add_to_position(%{quantity: quantity, entry_price: entry_price}, direction, order) do
+    existing_quantity = abs(quantity)
+    filled_quantity = order.last_fill_quantity
+    total_quantity = existing_quantity + filled_quantity
+
+    %{
+      direction: direction,
+      quantity: if(direction == :long, do: total_quantity, else: -total_quantity),
+      entry_price:
+        (existing_quantity * entry_price + filled_quantity * order.fill_price) / total_quantity
+    }
+  end
+
+  defp close_filled_pending_position(state, symbol, order, index) do
+    position = Map.fetch!(state.positions, symbol)
+    {proceeds, trade_return, remaining_position} = filled_exit_values(position, order)
+
+    trade = %{
+      symbol: symbol,
+      direction: position.direction,
+      entry_price: position.entry_price,
+      exit_price: order.fill_price,
+      shares: signed_filled_quantity(position, order),
+      return: trade_return,
+      index: index
+    }
+
+    %{
+      state
+      | capital: state.capital + proceeds,
+        positions: update_position_after_exit(state.positions, symbol, remaining_position),
+        pending_orders: update_pending_order(state.pending_orders, symbol, order),
+        last_order: order,
+        pending_fill_return: trade_return,
+        trades: [trade | state.trades],
+        trade_count: state.trade_count + 1
+    }
+  end
+
+  defp filled_exit_values(
+         %{direction: :long, quantity: quantity, entry_price: entry_price},
+         order
+       ) do
+    filled_quantity = order.last_fill_quantity
+    value = filled_quantity * order.fill_price
+
+    {value - order.last_fill_fee, (order.fill_price - entry_price) / entry_price,
+     quantity - filled_quantity}
+  end
+
+  defp filled_exit_values(
+         %{direction: :short, quantity: quantity, entry_price: entry_price},
+         order
+       ) do
+    filled_quantity = order.last_fill_quantity
+    value = filled_quantity * order.fill_price
+
+    {-(value + order.last_fill_fee), (entry_price - order.fill_price) / entry_price,
+     quantity + filled_quantity}
+  end
+
+  defp signed_filled_quantity(%{direction: :long}, order), do: order.last_fill_quantity
+  defp signed_filled_quantity(%{direction: :short}, order), do: -order.last_fill_quantity
+
+  defp update_position_after_exit(positions, symbol, quantity) when abs(quantity) < 1.0e-12,
+    do: Map.delete(positions, symbol)
+
+  defp update_position_after_exit(positions, symbol, quantity),
+    do: put_in(positions, [symbol, :quantity], quantity)
+
+  defp update_pending_order(pending_orders, symbol, %{status: :filled}),
+    do: Map.delete(pending_orders, symbol)
+
+  defp update_pending_order(pending_orders, symbol, order),
+    do: Map.put(pending_orders, symbol, order)
+
   defp open_long_position(state, symbol, price, execution_options) do
     position_value =
       calculate_position_size(state.capital, execution_options.position_size_method)
@@ -494,10 +902,12 @@ defmodule Quant.Strategy.Backtest do
     quantity = (position_value - commission_cost) / entry_price
 
     position = %{direction: :long, quantity: quantity, entry_price: entry_price}
+    order = audit_order(symbol, :buy, quantity, price, execution_options, :signal_entry)
 
     %{
       state
       | capital: state.capital - position_value,
+        last_order: order,
         positions: Map.put(state.positions, symbol, position)
     }
   end
@@ -511,15 +921,17 @@ defmodule Quant.Strategy.Backtest do
     quantity = position_value / entry_price
 
     position = %{direction: :short, quantity: -quantity, entry_price: entry_price}
+    order = audit_order(symbol, :sell, quantity, price, execution_options, :signal_entry)
 
     %{
       state
       | capital: state.capital + position_value - commission_cost,
+        last_order: order,
         positions: Map.put(state.positions, symbol, position)
     }
   end
 
-  defp close_portfolio_position(state, symbol, price, index, execution_options) do
+  defp close_portfolio_position(state, symbol, price, index, execution_options, reason) do
     position = Map.fetch!(state.positions, symbol)
 
     {exit_price, proceeds, trade_return} =
@@ -540,17 +952,81 @@ defmodule Quant.Strategy.Backtest do
       index: index
     }
 
+    side = if position.direction == :long, do: :sell, else: :buy
+    order = audit_order(symbol, side, abs(position.quantity), price, execution_options, reason)
+
     {
       %{
         state
         | capital: state.capital + proceeds,
+          last_order: order,
           positions: Map.delete(state.positions, symbol),
+          pending_orders: Map.delete(state.pending_orders, symbol),
           trades: [trade | state.trades],
           trade_count: state.trade_count + 1
       },
       trade_return
     }
   end
+
+  defp audit_order(symbol, side, quantity, price, execution_options, reason) do
+    {:ok, order} = Order.new(symbol, side, :market, quantity, reason: reason)
+
+    {:ok, filled_order} =
+      Order.fill(order, price,
+        commission: execution_options.commission,
+        slippage: execution_options.slippage
+      )
+
+    filled_order
+  end
+
+  defp add_order_audit_columns(dataframe, results) do
+    orders = Enum.map(results, & &1.order)
+
+    dataframe
+    |> DataFrame.put("order_status", Series.from_list(Enum.map(orders, &order_status/1)))
+    |> DataFrame.put("order_type", Series.from_list(Enum.map(orders, &order_type/1)))
+    |> DataFrame.put("order_side", Series.from_list(Enum.map(orders, &order_side/1)))
+    |> DataFrame.put(
+      "order_quantity",
+      Series.from_list(Enum.map(orders, &order_field(&1, :quantity)))
+    )
+    |> DataFrame.put(
+      "order_filled_quantity",
+      Series.from_list(Enum.map(orders, &order_field(&1, :filled_quantity)))
+    )
+    |> DataFrame.put(
+      "order_remaining_quantity",
+      Series.from_list(Enum.map(orders, &order_field(&1, :remaining_quantity)))
+    )
+    |> DataFrame.put(
+      "order_trigger_price",
+      Series.from_list(Enum.map(orders, &order_field(&1, :trigger_price)))
+    )
+    |> DataFrame.put("order_reason", Series.from_list(Enum.map(orders, &order_reason/1)))
+    |> DataFrame.put(
+      "fill_price",
+      Series.from_list(Enum.map(orders, &order_field(&1, :fill_price)))
+    )
+    |> DataFrame.put("fee", Series.from_list(Enum.map(orders, &order_field(&1, :fee))))
+    |> DataFrame.put(
+      "slippage_cost",
+      Series.from_list(Enum.map(orders, &order_field(&1, :slippage_cost)))
+    )
+  end
+
+  defp order_status(nil), do: nil
+  defp order_status(order), do: Atom.to_string(order.status)
+  defp order_type(nil), do: nil
+  defp order_type(order), do: Atom.to_string(order.type)
+  defp order_side(nil), do: nil
+  defp order_side(order), do: Atom.to_string(order.side)
+  defp order_reason(nil), do: nil
+  defp order_reason(%{reason: nil}), do: nil
+  defp order_reason(order), do: Atom.to_string(order.reason)
+  defp order_field(nil, _field), do: nil
+  defp order_field(order, field), do: Map.get(order, field)
 
   defp close_position_values(
          %{direction: :long, quantity: quantity, entry_price: entry_price},
@@ -703,22 +1179,32 @@ defmodule Quant.Strategy.Backtest do
       else: dataframe
   end
 
-  defp validate_execution_options(
-         execute_on,
-         max_positions,
-         stop_loss,
-         take_profit,
-         allow_short,
-         close_final_position,
-         intrabar_exit_policy
-       ) do
+  defp validate_execution_options(%{
+         execute_on: execute_on,
+         max_positions: max_positions,
+         stop_loss: stop_loss,
+         take_profit: take_profit,
+         allow_short: allow_short,
+         close_final_position: close_final_position,
+         intrabar_exit_policy: intrabar_exit_policy,
+         entry_order: entry_order,
+         exit_order: exit_order,
+         max_volume_participation: max_volume_participation,
+         short_borrow_rate_per_bar: short_borrow_rate_per_bar,
+         short_maintenance_margin: short_maintenance_margin
+       }) do
     with :ok <- validate_execution_timing(execute_on, stop_loss, take_profit),
          :ok <- validate_max_positions(max_positions),
          :ok <- validate_stop_loss(stop_loss),
          :ok <- validate_take_profit(take_profit),
          :ok <- validate_boolean_option(allow_short, :allow_short) do
-      with :ok <- validate_boolean_option(close_final_position, :close_final_position) do
-        validate_intrabar_exit_policy(intrabar_exit_policy)
+      with :ok <- validate_boolean_option(close_final_position, :close_final_position),
+           :ok <- validate_intrabar_exit_policy(intrabar_exit_policy),
+           :ok <- validate_entry_order(entry_order),
+           :ok <- validate_exit_order(exit_order),
+           :ok <- validate_max_volume_participation(max_volume_participation),
+           :ok <- validate_short_borrow_rate(short_borrow_rate_per_bar) do
+        validate_short_maintenance_margin(short_maintenance_margin)
       end
     end
   end
@@ -744,6 +1230,35 @@ defmodule Quant.Strategy.Backtest do
     do: :ok
 
   defp validate_intrabar_exit_policy(_policy), do: {:error, :invalid_intrabar_exit_policy}
+  defp validate_entry_order(:market), do: :ok
+
+  defp validate_entry_order({type, price})
+       when type in [:limit, :stop] and is_number(price) and price > 0,
+       do: :ok
+
+  defp validate_entry_order(_entry_order), do: {:error, :invalid_entry_order}
+
+  defp validate_exit_order(:market), do: :ok
+
+  defp validate_exit_order({type, price})
+       when type in [:limit, :stop] and is_number(price) and price > 0,
+       do: :ok
+
+  defp validate_exit_order(_exit_order), do: {:error, :invalid_exit_order}
+
+  defp validate_max_volume_participation(nil), do: :ok
+
+  defp validate_max_volume_participation(value)
+       when is_number(value) and value > 0 and value <= 1,
+       do: :ok
+
+  defp validate_max_volume_participation(_value), do: {:error, :invalid_max_volume_participation}
+
+  defp validate_short_borrow_rate(value) when is_number(value) and value >= 0, do: :ok
+  defp validate_short_borrow_rate(_value), do: {:error, :invalid_short_borrow_rate_per_bar}
+
+  defp validate_short_maintenance_margin(value) when is_number(value) and value > 0, do: :ok
+  defp validate_short_maintenance_margin(_value), do: {:error, :invalid_short_maintenance_margin}
 
   defp calculate_portfolio_value(%{
          capital: capital,
