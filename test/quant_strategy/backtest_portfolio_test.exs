@@ -32,6 +32,14 @@ defmodule Quant.Strategy.BacktestPortfolioTest do
     assert Series.to_list(result["position"]) == [100.0, 50.0, 0.0, 0.0]
     assert Series.to_list(result["trade_count"]) == [2, 2, 2, 2]
     assert_in_delta List.last(Series.to_list(result["portfolio_value"])), 10_100.0, 1.0e-12
+    assert Enum.all?(Series.to_list(result["cash"]), &is_number/1)
+    assert Enum.all?(Series.to_list(result["gross_exposure"]), &is_number/1)
+    assert Enum.all?(Series.to_list(result["net_exposure"]), &is_number/1)
+
+    ledgers = Series.to_list(result["exposure_ledger"])
+    assert Enum.at(ledgers, 1) =~ ~s("asset":"AAA")
+    assert Enum.at(ledgers, 1) =~ ~s("asset":"BBB")
+    assert Enum.at(ledgers, 3) == "[]"
   end
 
   test "supports short positions and realizes profit when the price falls" do

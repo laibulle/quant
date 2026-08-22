@@ -170,6 +170,10 @@ defmodule Quant.StrategyTest do
 
       # Check that backtest columns were added
       assert "portfolio_value" in DataFrame.names(backtest_df)
+      assert "cash" in DataFrame.names(backtest_df)
+      assert "gross_exposure" in DataFrame.names(backtest_df)
+      assert "net_exposure" in DataFrame.names(backtest_df)
+      assert "exposure_ledger" in DataFrame.names(backtest_df)
       assert "position" in DataFrame.names(backtest_df)
       assert "trade_return" in DataFrame.names(backtest_df)
       assert "total_return" in DataFrame.names(backtest_df)

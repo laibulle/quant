@@ -191,6 +191,12 @@ defmodule Quant.Strategy.Backtest do
     # Extract required data
     signals = DataFrame.pull(signals_df, "signal") |> Series.to_list()
     prices = DataFrame.pull(signals_df, "close") |> Series.to_list()
+
+    symbols =
+      if "symbol" in DataFrame.names(signals_df),
+        do: DataFrame.pull(signals_df, "symbol") |> Series.to_list(),
+        else: List.duplicate("__default__", length(prices))
+
     execution_prices = execution_prices(signals_df, prices, execute_on)
     execution_signals = execution_signals(signals, execute_on)
 
@@ -205,14 +211,17 @@ defmodule Quant.Strategy.Backtest do
     }
 
     # Process signals sequentially
-    {final_state, portfolio_values, positions, trade_returns} =
+    {final_state, portfolio_values, positions, trade_returns, cash_values, gross_exposures,
+     net_exposures} =
       execution_signals
       |> Enum.zip(Enum.zip(execution_prices, prices))
       |> Enum.with_index()
-      |> Enum.reduce({initial_state, [], [], []}, fn {{signal, {execution_price, close_price}},
-                                                      index},
-                                                     {state, portfolio_acc, position_acc,
-                                                      returns_acc} ->
+      |> Enum.reduce({initial_state, [], [], [], [], [], []}, fn {{signal,
+                                                                   {execution_price, close_price}},
+                                                                  index},
+                                                                 {state, portfolio_acc,
+                                                                  position_acc, returns_acc,
+                                                                  cash_acc, gross_acc, net_acc} ->
         signal =
           apply_risk_controls(state, signal, close_price, stop_loss, take_profit, execute_on)
 
@@ -228,6 +237,14 @@ defmodule Quant.Strategy.Backtest do
           )
 
         portfolio_value = calculate_portfolio_value(new_state, close_price)
+        marked_position = new_state.position * close_price
+
+        {gross_exposure, net_exposure} =
+          if portfolio_value == 0.0 do
+            {0.0, 0.0}
+          else
+            {abs(marked_position) / portfolio_value, marked_position / portfolio_value}
+          end
 
         # Calculate trade return if position was closed
         trade_return =
@@ -241,8 +258,25 @@ defmodule Quant.Strategy.Backtest do
           new_state,
           [portfolio_value | portfolio_acc],
           [new_state.position | position_acc],
-          [trade_return | returns_acc]
+          [trade_return | returns_acc],
+          [new_state.capital | cash_acc],
+          [gross_exposure | gross_acc],
+          [net_exposure | net_acc]
         }
+      end)
+
+    exposure_ledgers =
+      [
+        symbols,
+        Enum.reverse(positions),
+        prices,
+        Enum.reverse(portfolio_values)
+      ]
+      |> Enum.zip()
+      |> Enum.map(fn {symbol, position, price, portfolio_value} ->
+        encode_exposure_ledger([
+          asset_exposure(symbol, position, price, portfolio_value)
+        ])
       end)
 
     # Add backtest results to DataFrame
@@ -251,6 +285,10 @@ defmodule Quant.Strategy.Backtest do
       |> DataFrame.put("portfolio_value", Series.from_list(Enum.reverse(portfolio_values)))
       |> DataFrame.put("position", Series.from_list(Enum.reverse(positions)))
       |> DataFrame.put("trade_return", Series.from_list(Enum.reverse(trade_returns)))
+      |> DataFrame.put("cash", Series.from_list(Enum.reverse(cash_values)))
+      |> DataFrame.put("gross_exposure", Series.from_list(Enum.reverse(gross_exposures)))
+      |> DataFrame.put("net_exposure", Series.from_list(Enum.reverse(net_exposures)))
+      |> DataFrame.put("exposure_ledger", Series.from_list(exposure_ledgers))
       |> add_performance_metrics(final_state, initial_capital)
 
     {:ok, result_df}
@@ -351,10 +389,20 @@ defmodule Quant.Strategy.Backtest do
         state = put_in(state, [:pending_signals, symbol], raw_signal)
         position = position_quantity(state, symbol)
         portfolio_value = calculate_portfolio_value(state)
+        {gross_exposure, net_exposure} = portfolio_exposures(state, portfolio_value)
+
+        exposure_ledger =
+          state
+          |> portfolio_asset_exposures(portfolio_value)
+          |> encode_exposure_ledger()
 
         result = %{
           portfolio_value: portfolio_value,
+          cash: state.capital,
           position: position,
+          gross_exposure: gross_exposure,
+          net_exposure: net_exposure,
+          exposure_ledger: exposure_ledger,
           trade_return:
             state.pending_fill_return + margin_trade_return + intrabar_trade_return + trade_return +
               final_trade_return,
@@ -376,6 +424,19 @@ defmodule Quant.Strategy.Backtest do
         Series.from_list(Enum.map(ordered_results, & &1.portfolio_value))
       )
       |> DataFrame.put("position", Series.from_list(Enum.map(ordered_results, & &1.position)))
+      |> DataFrame.put("cash", Series.from_list(Enum.map(ordered_results, & &1.cash)))
+      |> DataFrame.put(
+        "gross_exposure",
+        Series.from_list(Enum.map(ordered_results, & &1.gross_exposure))
+      )
+      |> DataFrame.put(
+        "net_exposure",
+        Series.from_list(Enum.map(ordered_results, & &1.net_exposure))
+      )
+      |> DataFrame.put(
+        "exposure_ledger",
+        Series.from_list(Enum.map(ordered_results, & &1.exposure_ledger))
+      )
       |> DataFrame.put(
         "trade_return",
         Series.from_list(Enum.map(ordered_results, & &1.trade_return))
@@ -404,6 +465,90 @@ defmodule Quant.Strategy.Backtest do
   end
 
   defp sorted_portfolio_dataframe(_dataframe, rows), do: DataFrame.new(rows)
+
+  defp portfolio_exposures(_state, portfolio_value) when portfolio_value == 0.0, do: {0.0, 0.0}
+
+  defp portfolio_exposures(state, portfolio_value) do
+    {gross_value, net_value} =
+      Enum.reduce(state.positions, {0.0, 0.0}, fn {symbol, %{quantity: quantity}}, {gross, net} ->
+        marked_value = quantity * Map.get(state.last_prices, symbol, 0.0)
+        {gross + abs(marked_value), net + marked_value}
+      end)
+
+    {gross_value / portfolio_value, net_value / portfolio_value}
+  end
+
+  defp portfolio_asset_exposures(state, portfolio_value) do
+    state.positions
+    |> Enum.sort_by(fn {symbol, _position} -> symbol end)
+    |> Enum.map(fn {symbol, %{quantity: quantity}} ->
+      asset_exposure(
+        symbol,
+        quantity,
+        Map.get(state.last_prices, symbol, 0.0),
+        portfolio_value
+      )
+    end)
+  end
+
+  defp asset_exposure(symbol, position, mark, portfolio_value) do
+    market_value = position * mark
+
+    %{
+      "asset" => symbol,
+      "position" => position,
+      "mark" => mark,
+      "market_value" => market_value,
+      "gross_exposure" =>
+        if(portfolio_value == 0.0, do: 0.0, else: abs(market_value) / portfolio_value),
+      "net_exposure" => if(portfolio_value == 0.0, do: 0.0, else: market_value / portfolio_value)
+    }
+  end
+
+  defp encode_exposure_ledger(exposures) do
+    encoded =
+      Enum.map_join(exposures, ",", fn exposure ->
+        "{" <>
+          "\"asset\":" <>
+          json_string(exposure["asset"]) <>
+          "," <>
+          "\"position\":" <>
+          json_number(exposure["position"]) <>
+          "," <>
+          "\"mark\":" <>
+          json_number(exposure["mark"]) <>
+          "," <>
+          "\"market_value\":" <>
+          json_number(exposure["market_value"]) <>
+          "," <>
+          "\"gross_exposure\":" <>
+          json_number(exposure["gross_exposure"]) <>
+          "," <>
+          "\"net_exposure\":" <>
+          json_number(exposure["net_exposure"]) <>
+          "}"
+      end)
+
+    "[" <> encoded <> "]"
+  end
+
+  defp json_string(value) do
+    escaped =
+      value
+      |> to_string()
+      |> String.replace("\\", "\\\\")
+      |> String.replace("\"", "\\\"")
+      |> String.replace("\n", "\\n")
+      |> String.replace("\r", "\\r")
+      |> String.replace("\t", "\\t")
+
+    "\"" <> escaped <> "\""
+  end
+
+  defp json_number(value) when is_integer(value), do: Integer.to_string(value)
+
+  defp json_number(value) when is_float(value),
+    do: :erlang.float_to_binary(value, [:compact, decimals: 15])
 
   defp timestamp_sort_key(%DateTime{} = timestamp), do: DateTime.to_unix(timestamp, :microsecond)
   defp timestamp_sort_key(timestamp), do: timestamp
