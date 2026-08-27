@@ -40,7 +40,7 @@ dependencies = [
     "narwhals==2.8.0",
     "nbformat==5.10.4",
     "nest-asyncio==1.6.0",
-    "numpy==2.3.3",
+    "numpy==2.5.1",
     "packaging==25.0",
     "pandas==2.3.3",
     "parso==0.8.5",
